@@ -1,0 +1,13 @@
+python-telegram-bot
+python-dotenv
+requests
+
+pandas
+numpy
+
+sentence-transformers
+torch
+
+chromadb
+
+tqdm
