@@ -1,12 +1,12 @@
 import logging
 
-from app.context_builder import build_recommendation_context
-from app.llm_client import explain_recommendations
+from app.context_builder import build_recommendation_cards
 from app.messages import no_results_message
+from app.response_formatter import format_recommendations
 from app.tmdb_client import (
-    country_label,
     discover,
     is_director_request,
+    parse_count,
     parse_country_iso,
     parse_genres,
     parse_media_type,
@@ -24,14 +24,15 @@ class MovieAgent:
         year = parse_year(user_text)
         country_iso = parse_country_iso(user_text)
         genre_ids = parse_genres(user_text)
-        country = country_label(country_iso)
+        count = parse_count(user_text)
 
         logger.info(
-            "Request type=%s year=%s country=%s genres=%s",
+            "Request type=%s year=%s country=%s genres=%s count=%s",
             media_type,
             year,
             country_iso,
             genre_ids,
+            count,
         )
 
         with_crew = None
@@ -58,27 +59,8 @@ class MovieAgent:
         if not items:
             return no_results_message(media_type, year, country_iso, genre_ids)
 
-        context = build_recommendation_context(items, media_type)
-        if not context.strip():
+        cards = build_recommendation_cards(items, media_type, limit=count)
+        if not cards:
             return no_results_message(media_type, year, country_iso, genre_ids)
 
-        prompt = f"""
-Пользователь запросил:
-{user_text}
-
-Тип: {media_type}
-Год: {year or "не указан"}
-Страна: {country or "не указана"}
-
-Вот результаты TMDB (уже отфильтрованы):
-
-{context}
-
-Задача:
-- выбери лучшие варианты из списка выше
-- кратко объясни, почему они подходят
-- не добавляй фильмы и сериалы, которых нет в списке
-- отвечай на русском
-"""
-
-        return explain_recommendations(prompt)
+        return format_recommendations(cards, media_type, requested=count)

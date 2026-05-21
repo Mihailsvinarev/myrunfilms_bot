@@ -1,7 +1,9 @@
+from app.agent import MovieAgent
 from app.tmdb_client import (
     discover_movies,
     discover_tv,
     get_movie_details,
+    parse_count,
     parse_country_iso,
     parse_genres,
     parse_year,
@@ -44,6 +46,19 @@ text = "российский сериал 2020 детектив"
 print("year:", parse_year(text))
 print("country:", parse_country_iso(text))
 print("genres:", parse_genres(text))
+
+print("\n=== PARSE COUNT ===")
+for q in [
+    "3 детективныз сериала России за 2021 год",
+    "подбери пять фильмов",
+    "три сериала детектив",
+    "фильм комедия 2015",
+]:
+    print(repr(q), "->", parse_count(q))
+
+print("\n=== FORMATTED RESPONSE (no LLM) ===")
+agent = MovieAgent()
+print(agent.ask("3 детективныз сериала России за 2021 год")[:800])
 
 
 print("\n=== SEARCH PERSON ===")

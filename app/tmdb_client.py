@@ -198,6 +198,53 @@ def parse_year(text: str) -> int | None:
     return int(match.group()) if match else None
 
 
+COUNT_WORDS: dict[str, int] = {
+    "один": 1,
+    "одна": 1,
+    "одно": 1,
+    "два": 2,
+    "две": 2,
+    "двух": 2,
+    "три": 3,
+    "трёх": 3,
+    "трех": 3,
+    "четыре": 4,
+    "четырёх": 4,
+    "четырех": 4,
+    "пять": 5,
+    "пяти": 5,
+    "шесть": 6,
+    "семь": 7,
+    "восемь": 8,
+    "девять": 9,
+    "десять": 10,
+}
+
+COUNT_PATTERNS = (
+    r"(?<![0-9])([1-9]|10)(?!\d)\s*\S*\s*(?:фильм|сериал|вариант|детектив)",
+    r"(?:дай|дайте|подбери|нужно|хочу|посоветуй|покажи)\s*([1-9]|10)",
+    r"(?<![0-9])([1-9]|10)(?!\d)\s*(?:шт|штук)",
+    r"(?<![0-9])([1-9]|10)(?!\d)\s+(?:лучш|топ)",
+)
+
+
+def parse_count(text: str, *, default: int = 5, maximum: int = 10) -> int:
+    """Extract requested number of titles; ignores years like 2021."""
+    lowered = text.lower()
+    without_years = re.sub(r"20\d{2}", " ", lowered)
+
+    for pattern in COUNT_PATTERNS:
+        match = re.search(pattern, without_years)
+        if match:
+            return min(maximum, max(1, int(match.group(1))))
+
+    for word, count in COUNT_WORDS.items():
+        if re.search(rf"\b{re.escape(word)}\b", without_years):
+            return min(maximum, max(1, count))
+
+    return min(maximum, max(1, default))
+
+
 def parse_country_iso(text: str) -> str | None:
     lowered = text.lower()
     for keyword, iso in COUNTRY_KEYWORDS.items():

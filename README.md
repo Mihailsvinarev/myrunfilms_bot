@@ -2,16 +2,16 @@
 
 Telegram-бот для подбора фильмов и сериалов по запросу на естественном языке.
 
-**Стек:** Telegram Bot API → TMDB Discover → Ollama (объяснение рекомендаций).
+**Стек:** Telegram Bot API → TMDB Discover → форматированный ответ (без LLM).
 
 ---
 
 ## Возможности
 
 - Поиск фильмов и сериалов через TMDB Discover API
-- Фильтры: жанр, страна, год
+- Фильтры: жанр, страна, год, количество («3 сериала»)
 - Режим «фильмы режиссёра» (`with_crew`)
-- LLM только объясняет уже найденные тайтлы (не придумывает названия)
+- Ответ собирается в коде из данных TMDB — названия не выдумываются
 
 ---
 
@@ -21,8 +21,7 @@ Telegram-бот для подбора фильмов и сериалов по з
 User → main.py (Telegram)
      → MovieAgent (app/agent.py)
          → TMDB Discover (app/tmdb_client.py)
-         → Context builder (app/context_builder.py)
-         → Ollama (app/llm_client.py)
+         → Cards + formatter (context_builder, response_formatter)
      → Response
 ```
 
@@ -30,10 +29,10 @@ User → main.py (Telegram)
 |--------|------------|
 | `main.py` | Telegram handlers, polling |
 | `app/agent.py` | Оркестрация запроса |
-| `app/tmdb_client.py` | Discover API, парсинг intent |
-| `app/context_builder.py` | Сбор контекста для LLM |
-| `app/llm_client.py` | Вызов Ollama |
-| `app/messages.py` | Сообщения пользователю |
+| `app/tmdb_client.py` | Discover API, парсинг intent (`parse_count`, страна, год) |
+| `app/context_builder.py` | Карточки тайтлов из TMDB |
+| `app/response_formatter.py` | Текст ответа пользователю |
+| `app/messages.py` | Сообщения «ничего не найдено» |
 | `app/logging_setup.py` | Логирование (UTF-8 на Windows) |
 
 ---
@@ -41,7 +40,6 @@ User → main.py (Telegram)
 ## Требования
 
 - Python 3.11+
-- [Ollama](https://ollama.com/) (локально, порт `11434`)
 - API-ключ [TMDB](https://www.themoviedb.org/settings/api)
 - Telegram Bot Token ([@BotFather](https://t.me/BotFather))
 
@@ -58,13 +56,6 @@ python -m pip install -r requirements.txt
 ```env
 BOT_TOKEN=your_telegram_bot_token
 TMDB_API_KEY=your_tmdb_api_key
-OLLAMA_MODEL=llama3.2
-```
-
-Запустите Ollama и скачайте модель:
-
-```bash
-ollama pull llama3.2
 ```
 
 Запуск бота:
