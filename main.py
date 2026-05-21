@@ -1,9 +1,9 @@
-from telegram.ext import ApplicationBuilder, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from telegram import Update
-from telegram.ext import ContextTypes
 
 from dotenv import load_dotenv
 import os
+import asyncio
 
 from app.agent import MovieAgent
 
@@ -14,17 +14,27 @@ TOKEN = os.getenv("BOT_TOKEN")
 agent = MovieAgent()
 
 
+# ---------------- HANDLER ----------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message or not update.message.text:
+        return
 
     user_text = update.message.text
 
     await update.message.reply_text("🎬 Думаю над фильмами...")
 
-    answer = agent.ask(user_text)
+    try:
+        # 🔥 ВАЖНО: перенос блокирующего кода в thread
+        answer = await asyncio.to_thread(agent.ask, user_text)
 
-    await update.message.reply_text(answer)
+        await update.message.reply_text(answer)
+
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка: {str(e)}")
 
 
+# ---------------- APP ----------------
 app = (
     ApplicationBuilder()
     .token(TOKEN)
@@ -35,8 +45,8 @@ app = (
     .build()
 )
 
-app.add_handler(MessageHandler(filters.TEXT, handle_message))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-print("Movie AI Bot started...")
+print("🎬 Movie AI Bot started...")
 
 app.run_polling()
