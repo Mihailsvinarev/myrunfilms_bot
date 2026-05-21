@@ -28,8 +28,8 @@ GENRE_KEYWORDS: dict[str, list[int]] = {
 }
 
 COUNTRY_KEYWORDS: dict[str, str] = {
-    "россия": "RU",
-    "российск": "RU",
+    # stems cover Russian cases: Россия, России, российский, ...
+    "росси": "RU",
     "russia": "RU",
     "сша": "US",
     "америк": "US",
@@ -125,7 +125,8 @@ def discover_movies(
         with_crew=with_crew,
         year_key="primary_release_year",
     )
-    return _get(url, params).get("results", [])
+    results = _get(url, params).get("results", [])
+    return _filter_by_origin_country(results, country_iso)
 
 
 def discover_tv(
@@ -143,7 +144,23 @@ def discover_tv(
         with_crew=with_crew,
         year_key="first_air_date_year",
     )
-    return _get(url, params).get("results", [])
+    results = _get(url, params).get("results", [])
+    return _filter_by_origin_country(results, country_iso)
+
+
+def _filter_by_origin_country(
+    items: list[dict],
+    country_iso: str | None,
+) -> list[dict]:
+    if not country_iso:
+        return items
+
+    filtered = [
+        item
+        for item in items
+        if country_iso in (item.get("origin_country") or [])
+    ]
+    return filtered
 
 
 def discover(

@@ -8,8 +8,9 @@ __pycache__/
 # env file
 .env
 
-# chroma database
+# legacy local DB (RAG removed)
 chroma_db/
+data/
 
 # IDE
 .vscode/
