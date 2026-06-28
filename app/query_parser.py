@@ -2,28 +2,10 @@ from __future__ import annotations
 
 import re
 
+from app.genres import PARSER_GENRE_KEYWORDS
 from app.models import QueryMode, SearchFilters
 
-GENRE_KEYWORDS: dict[str, list[str]] = {
-    "детектив": ["детектив"],
-    "криминал": ["криминал"],
-    "триллер": ["триллер"],
-    "ужас": ["ужасы"],
-    "хоррор": ["ужасы"],
-    "комед": ["комедия"],
-    "драм": ["драма"],
-    "фантаст": ["фантастика"],
-    "боевик": ["боевик"],
-    "мелодрам": ["мелодрама"],
-    "романт": ["мелодрама"],
-    "аним": ["мультфильм"],
-    "документал": ["документальный"],
-    "истор": ["история"],
-    "приключ": ["приключения"],
-    "семейн": ["семейный"],
-    "военн": ["военный"],
-    "вестерн": ["вестern"],
-}
+GENRE_KEYWORDS = PARSER_GENRE_KEYWORDS
 
 COUNTRY_KEYWORDS: dict[str, str] = {
     "росси": "Россия",
@@ -159,6 +141,72 @@ def parse_company(text: str) -> str | None:
 def is_director_request(text: str) -> bool:
     lowered = text.lower()
     return "режиссер" in lowered or "режиссёр" in lowered
+
+
+COMPLEXITY_MARKERS = (
+    "но не ",
+    "кроме ",
+    "без ",
+    "except ",
+    "не хочу",
+    "не надо",
+    "что-нибудь",
+    "что нибудь",
+    "что-то",
+    "типа ",
+    "вроде ",
+    "настроен",
+    "атмосфер",
+)
+
+VAGUE_THEME_HINTS: tuple[tuple[str, list[str]], ...] = (
+    ("расследован", ["детектив"]),
+    ("детектив", ["детектив"]),
+    ("криминал", ["криминал"]),
+    ("маньяк", ["триллер", "криминал"]),
+    ("серийн", ["триллер", "криминал"]),
+    ("убийц", ["триллер", "криминал"]),
+    ("мрачн", ["триллер"]),
+    ("ужас", ["ужасы"]),
+    ("романт", ["мелодрама"]),
+    ("комед", ["комедия"]),
+    ("фантаст", ["фантастика"]),
+    ("боевик", ["боевик"]),
+    ("приключен", ["приключения"]),
+)
+
+
+def is_vague_query(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in COMPLEXITY_MARKERS) or "про " in lowered
+
+
+def parse_vague_query(text: str) -> SearchFilters | None:
+    if not is_vague_query(text):
+        return None
+
+    lowered = text.lower()
+    genres: list[str] = []
+    for hint, names in VAGUE_THEME_HINTS:
+        if hint in lowered:
+            for name in names:
+                if name not in genres:
+                    genres.append(name)
+
+    if not genres:
+        return None
+
+    return SearchFilters(
+        media_type=parse_media_type(text),
+        year=parse_year(text),
+        country_name=parse_country_name(text),
+        genre_names=[genres[0]],
+        count=parse_count(text),
+        company_query=parse_company(text),
+        user_text=text,
+        query_mode="filter",
+        restrict_media_type=has_explicit_media_type(text),
+    )
 
 
 SIMILAR_PATTERNS = (
@@ -304,6 +352,7 @@ def filters_from_ui(data: dict) -> SearchFilters:
     return SearchFilters(
         media_type=data.get("media_type", "movie"),
         year=data.get("year"),
+        years=data.get("years") or None,
         country_name=country_name,
         genre_names=genre_names,
         count=data.get("count", 5),

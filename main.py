@@ -7,18 +7,19 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
-    MessageHandler,
-    filters,
 )
 
 from app.agent import MovieAgent
 from app.bot_handlers import (
+    build_collection_callbacks,
+    build_collections_handler,
     build_filter_conversation,
     build_text_search_handler,
     start_command,
-    text_search_hint,
 )
+from app.handlers.common import AGENT_KEY
 from app.logging_setup import setup_logging
+from app.movie_browser import build_browser_handlers
 
 load_dotenv()
 setup_logging()
@@ -26,7 +27,6 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
-agent = MovieAgent()
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -41,13 +41,17 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.error("Unhandled error: %s", error, exc_info=error)
 
 
-async def on_shutdown(_: object) -> None:
-    await agent.close()
+async def on_shutdown(application) -> None:
+    agent = application.bot_data.get(AGENT_KEY)
+    if isinstance(agent, MovieAgent):
+        await agent.close()
 
 
 def main() -> None:
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN is not set in .env")
+
+    agent = MovieAgent()
 
     app = (
         ApplicationBuilder()
@@ -59,16 +63,16 @@ def main() -> None:
         .post_shutdown(on_shutdown)
         .build()
     )
+    app.bot_data[AGENT_KEY] = agent
 
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(build_filter_conversation(agent))
-    app.add_handler(
-        MessageHandler(
-            filters.Regex(r"^🔍 Поиск по тексту$"),
-            text_search_hint,
-        )
-    )
-    app.add_handler(build_text_search_handler(agent))
+    app.add_handler(build_filter_conversation())
+    app.add_handler(build_collections_handler())
+    for handler in build_collection_callbacks():
+        app.add_handler(handler)
+    for handler in build_browser_handlers():
+        app.add_handler(handler)
+    app.add_handler(build_text_search_handler())
     app.add_error_handler(error_handler)
 
     logger.info("Movie AI Bot started")

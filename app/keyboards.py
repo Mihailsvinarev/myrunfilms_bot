@@ -1,22 +1,20 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 
+from app.collections import COLLECTIONS
+from app.genres import (
+    GENRES,
+    build_collection_callback,
+    build_collection_genre_callback,
+    filter_genres,
+)
 from app.query_parser import COUNTRY_ISO_TO_NAME
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [["🔍 Поиск по тексту", "⚙️ Подбор по фильтрам"]],
+    [["🎬 Подборки"]],
     resize_keyboard=True,
 )
 
-GENRE_OPTIONS: list[tuple[str, list[str]]] = [
-    ("🕵 Детектив", ["детектив"]),
-    ("😂 Комедия", ["комедия"]),
-    ("🎭 Драма", ["драма"]),
-    ("👻 Ужасы", ["ужасы"]),
-    ("🚀 Фантастика", ["фантастика"]),
-    ("💥 Боевик", ["боевик"]),
-    ("💘 Мелодрама", ["мелодрама"]),
-    ("🔪 Триллер", ["триллер"]),
-]
+GENRE_OPTIONS = filter_genres()
 
 YEAR_OPTIONS = [2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018]
 
@@ -33,9 +31,9 @@ COMPANY_PRESETS: list[tuple[str, str]] = [
 def genre_keyboard() -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
-    for label, names in GENRE_OPTIONS:
-        data = "genre:" + "|".join(names)
-        row.append(InlineKeyboardButton(label, callback_data=data))
+    for genre in GENRE_OPTIONS:
+        data = "genre:" + "|".join([genre.kinopoisk_value or ""])
+        row.append(InlineKeyboardButton(genre.title, callback_data=data))
         if len(row) == 2:
             rows.append(row)
             row = []
@@ -45,17 +43,24 @@ def genre_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def year_keyboard() -> InlineKeyboardMarkup:
+def year_keyboard(selected_years: list[int] | None = None) -> InlineKeyboardMarkup:
+    selected = set(selected_years or [])
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for year in YEAR_OPTIONS:
-        row.append(InlineKeyboardButton(str(year), callback_data=f"year:{year}"))
+        label = f"✅ {year}" if year in selected else str(year)
+        row.append(InlineKeyboardButton(label, callback_data=f"year:toggle:{year}"))
         if len(row) == 4:
             rows.append(row)
             row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton("⏭ Пропустить", callback_data="year:skip")])
+    rows.append(
+        [
+            InlineKeyboardButton("Готово →", callback_data="year:done"),
+            InlineKeyboardButton("⏭ Пропустить", callback_data="year:skip"),
+        ]
+    )
     return InlineKeyboardMarkup(rows)
 
 
@@ -73,15 +78,13 @@ def country_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def media_keyboard(exclude_animation: bool) -> InlineKeyboardMarkup:
-    anim_label = "✅ Без мультфильмов" if exclude_animation else "⬜ Без мультфильмов"
+def media_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton("🎬 Фильм", callback_data="media:movie"),
                 InlineKeyboardButton("📺 Сериал", callback_data="media:tv"),
             ],
-            [InlineKeyboardButton(anim_label, callback_data="anim:toggle")],
             [InlineKeyboardButton("Далее →", callback_data="media:next")],
         ]
     )
@@ -98,4 +101,40 @@ def company_keyboard() -> InlineKeyboardMarkup:
     if row:
         rows.append(row)
     rows.append([InlineKeyboardButton("⏭ Пропустить", callback_data="company:skip")])
+    return InlineKeyboardMarkup(rows)
+
+
+def collections_keyboard() -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for collection in COLLECTIONS:
+        row.append(
+            InlineKeyboardButton(
+                collection.title,
+                callback_data=build_collection_callback(collection.id),
+            )
+        )
+        if len(row) == 1:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
+
+
+def collection_genres_keyboard(collection_id: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for genre in GENRES:
+        row.append(
+            InlineKeyboardButton(
+                genre.title,
+                callback_data=build_collection_genre_callback(collection_id, genre.id),
+            )
+        )
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
     return InlineKeyboardMarkup(rows)

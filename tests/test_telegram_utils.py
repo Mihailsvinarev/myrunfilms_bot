@@ -1,10 +1,10 @@
+from app.models import MovieItem
 from app.response_formatter import format_recommendations
 from app.telegram_utils import (
     TELEGRAM_MESSAGE_LIMIT,
     split_telegram_message,
     truncate_description,
 )
-from app.models import MovieItem
 
 
 def test_truncate_description():
@@ -29,7 +29,9 @@ def test_format_recommendations_fits_telegram_limit():
         for index in range(5)
     ]
     text = format_recommendations(movies, "tv", requested=5)
-    assert all(len(chunk) <= TELEGRAM_MESSAGE_LIMIT for chunk in split_telegram_message(text))
+    assert all(
+        len(chunk) <= TELEGRAM_MESSAGE_LIMIT for chunk in split_telegram_message(text)
+    )
 
 
 def test_split_telegram_message_on_long_text():

@@ -5,6 +5,24 @@ from app.platform_labels import platform_label
 from app.telegram_utils import truncate_description
 
 
+def format_compact_caption(movie: MovieItem, *, rating_label: str) -> str:
+    year = str(movie.year) if movie.year else "—"
+    return f"{movie.title} ({year})\n⭐ {rating_label}"
+
+
+def format_compact_list(
+    movies: list[MovieItem],
+    *,
+    rating_label_fn,
+    header: str,
+) -> str:
+    lines = [header, ""]
+    for index, movie in enumerate(movies, start=1):
+        year = str(movie.year) if movie.year else "—"
+        lines.append(f"{index}. {movie.title} ({year}) — ⭐ {rating_label_fn(movie)}")
+    return "\n".join(lines).strip()
+
+
 def format_recommendations(
     movies: list[MovieItem],
     media_type: str,

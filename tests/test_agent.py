@@ -40,8 +40,14 @@ async def test_agent_search_formats_results():
 
 
 @pytest.mark.asyncio
-@patch("app.agent.is_director_request", return_value=False)
-async def test_agent_ask_title_search(_mock_director):
+@patch("app.agent.resolve_search_filters", new_callable=AsyncMock)
+async def test_agent_ask_title_search(_mock_resolve):
+    _mock_resolve.return_value = SearchFilters(
+        query_mode="title",
+        title_query="Интерстеллар",
+        restrict_media_type=False,
+        user_text="Интерстеллар",
+    )
     agent = MovieAgent(client=AsyncMock())
     agent.client.search_by_title = AsyncMock(return_value=[])
     agent.client.enrich_watchability = AsyncMock(side_effect=lambda movies: movies)
@@ -49,20 +55,29 @@ async def test_agent_ask_title_search(_mock_director):
     await agent.ask("Интерстеллар")
 
     filters = agent.client.search_by_title.await_args.args[1]
+    _mock_resolve.assert_awaited_once()
     assert filters.query_mode == "title"
     assert filters.title_query == "Интерстеллар"
     agent.client.search.assert_not_called()
 
 
 @pytest.mark.asyncio
-@patch("app.agent.is_director_request", return_value=False)
-async def test_agent_ask_parses_text(_mock_director):
+@patch("app.agent.resolve_search_filters", new_callable=AsyncMock)
+async def test_agent_ask_parses_text(_mock_resolve):
+    _mock_resolve.return_value = SearchFilters(
+        media_type="tv",
+        year=2025,
+        company_query="Netflix",
+        query_mode="filter",
+        user_text="Сериалы Netflix 2025",
+    )
     agent = MovieAgent(client=AsyncMock())
     agent.client.search = AsyncMock(return_value=[])
     agent.client.enrich_watchability = AsyncMock(side_effect=lambda movies: movies)
 
     await agent.ask("Сериалы Netflix 2025")
 
+    _mock_resolve.assert_awaited_once()
     filters = agent.client.search.await_args.args[0]
     assert filters.media_type == "tv"
     assert filters.company_query == "Netflix"

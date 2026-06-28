@@ -7,6 +7,7 @@ from app.query_parser import (
     parse_country_name,
     parse_genre_names,
     parse_search_filters,
+    parse_vague_query,
 )
 
 
@@ -39,5 +40,35 @@ def test_parse_genres_detective():
     assert parse_genre_names("детективный сериал") == ["детектив"]
 
 
+def test_parse_vague_query_detective_theme():
+    filters = parse_vague_query("что-то мрачное про расследование")
+    assert filters is not None
+    assert filters.query_mode == "filter"
+    assert filters.genre_names == ["детектив"]
+    assert filters.title_query is None
+
+
+def test_parse_vague_query_maniac_theme():
+    filters = parse_vague_query("сериалы про маньяков Россия 2025")
+    assert filters is not None
+    assert filters.media_type == "tv"
+    assert filters.year == 2025
+    assert filters.country_name == "Россия"
+    assert filters.genre_names == ["триллер"]
+
+
 def test_parse_company():
     assert parse_company("фильмы Netflix") == "Netflix"
+
+
+def test_filters_from_ui_multiple_years():
+    from app.query_parser import filters_from_ui
+
+    filters = filters_from_ui(
+        {
+            "media_type": "movie",
+            "years": [2023, 2025],
+            "count": 5,
+        }
+    )
+    assert filters.years == [2023, 2025]

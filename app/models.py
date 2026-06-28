@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -18,11 +19,15 @@ class MovieItem(BaseModel):
     alternative_title: str | None = None
     year: int | None = None
     rating: float | None = None
+    kp_rating: float | None = None
+    tmdb_rating: float | None = None
+    imdb_rating: float | None = None
     countries: list[str] = Field(default_factory=list)
     genres: list[str] = Field(default_factory=list)
     description: str = ""
     is_series: bool = False
     watch_platforms: list[WatchPlatform] = Field(default_factory=list)
+    poster_url: str | None = None
 
     @property
     def kinopoisk_url(self) -> str:
@@ -43,10 +48,47 @@ class MovieItem(BaseModel):
             return "—"
         return f"{self.rating:.1f}"
 
+    @property
+    def kp_rating_label(self) -> str:
+        if self.kp_rating is None:
+            return "—"
+        return f"{self.kp_rating:.1f}"
+
+    @property
+    def tmdb_rating_label(self) -> str:
+        if self.tmdb_rating is None:
+            return "—"
+        return f"{self.tmdb_rating:.1f}"
+
+    @property
+    def imdb_rating_label(self) -> str:
+        if self.imdb_rating is None:
+            return "—"
+        return f"{self.imdb_rating:.1f}"
+
+    @property
+    def secondary_rating_display(self) -> str:
+        if self.tmdb_rating is not None:
+            return f"TMDB ⭐ {self.tmdb_rating_label}"
+        if self.imdb_rating is not None:
+            return f"IMDb ⭐ {self.imdb_rating_label}"
+        return "TMDB ⭐ —"
+
+
+@dataclass(frozen=True, slots=True)
+class SearchResult:
+    movies: list[MovieItem]
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None and bool(self.movies)
+
 
 class SearchFilters(BaseModel):
     media_type: Literal["movie", "tv"] = "movie"
     year: int | None = None
+    years: list[int] | None = None
     country_name: str | None = None
     genre_names: list[str] | None = None
     count: int = Field(default=5, ge=1, le=10)

@@ -1,7 +1,11 @@
 import httpx
 import pytest
 
-from app.kinopoisk_client import KinopoiskClient
+from app.kinopoisk_client import (
+    KinopoiskClient,
+    _extract_russian_title,
+    _premiere_range,
+)
 from app.models import MovieItem, SearchFilters
 
 SAMPLE_DOC = {
@@ -157,3 +161,143 @@ async def test_search_by_title_matches_exact_name():
     assert len(movies) == 1
     assert movies[0].id == 258687
     assert movies[0].title == "Интерстеллар"
+
+
+@pytest.mark.asyncio
+async def test_search_new_movies_uses_premiere_and_rating_sort():
+    captured_pages: list[list[tuple[str, str | int]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_pages.append(list(request.url.params.multi_items()))
+        return httpx.Response(
+            200,
+            json={
+                "docs": [
+                    {
+                        **SAMPLE_DOC,
+                        "id": 501,
+                        "name": "Новый фильм",
+                        "isSeries": False,
+                        "type": "movie",
+                        "rating": {"kp": 7.0, "tmdb": 8.2},
+                        "poster": {"url": "https://example.com/poster.jpg"},
+                    },
+                    {
+                        **SAMPLE_DOC,
+                        "id": 502,
+                        "name": "Без TMDB",
+                        "isSeries": False,
+                        "type": "movie",
+                        "rating": {"kp": 7.5, "imdb": 6.4},
+                        "poster": {"url": "https://example.com/poster2.jpg"},
+                    },
+                    {
+                        **SAMPLE_DOC,
+                        "id": 503,
+                        "name": "Слабый рейтинг",
+                        "isSeries": False,
+                        "type": "movie",
+                        "rating": {"kp": 5.0, "tmdb": 8.0},
+                    },
+                ]
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="https://api.kinopoisk.dev/v1.4",
+        headers={"X-API-KEY": "test"},
+    ) as http_client:
+        client = KinopoiskClient(api_key="test", client=http_client)
+        movies = await client.search_new_movies(limit=5)
+
+    params = dict(captured_pages[0])
+    assert params["isSeries"] == "false"
+    assert params["type"] == "movie"
+    assert params["rating.kp"] == "6-10"
+    assert "premiere.world" in params
+    assert captured_pages[0].count(("sortField", "premiere.world")) == 1
+    assert captured_pages[0].count(("sortField", "rating.kp")) == 1
+    assert captured_pages[0].count(("sortField", "rating.tmdb")) == 1
+    assert ("rating.tmdb", "6-10") not in captured_pages[0]
+    assert len(movies) == 2
+    assert movies[0].title == "Новый фильм"
+    assert movies[0].kp_rating == 7.0
+    assert movies[0].tmdb_rating == 8.2
+    assert movies[1].imdb_rating == 6.4
+
+
+@pytest.mark.asyncio
+async def test_search_popular_series_uses_kp_votes_sort():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = list(request.url.params.multi_items())
+        return httpx.Response(200, json={"docs": [SAMPLE_DOC]})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="https://api.kinopoisk.dev/v1.4",
+        headers={"X-API-KEY": "test"},
+    ) as http_client:
+        client = KinopoiskClient(api_key="test", client=http_client)
+        movies = await client.search_popular_series(limit=1)
+
+    params = dict(captured["params"])
+    assert params["isSeries"] == "true"
+    assert captured["params"].count(("sortField", "votes.kp")) == 1
+    assert movies[0].is_series is True
+
+
+@pytest.mark.asyncio
+async def test_search_by_filters_supports_multiple_years():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"docs": [SAMPLE_DOC]})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="https://api.kinopoisk.dev/v1.4",
+        headers={"X-API-KEY": "test"},
+    ) as http_client:
+        client = KinopoiskClient(api_key="test", client=http_client)
+        filters = SearchFilters(
+            media_type="tv",
+            years=[2024, 2025],
+            count=3,
+        )
+        await client.search(filters)
+
+    assert captured["params"]["year"] == "2024-2025"
+
+
+def test_premiere_range_uses_kinopoisk_date_format():
+    value = _premiere_range(6)
+    parts = value.split("-")
+    assert len(parts) == 2
+    for part in parts:
+        day, month, year = part.split(".")
+        assert len(day) == 2 and len(month) == 2 and len(year) == 4
+
+
+def test_extract_russian_title_prefers_ru_name():
+    title = _extract_russian_title(
+        {
+            "name": "Interstellar",
+            "alternativeName": "Interstellar",
+            "names": [
+                {
+                    "name": "Интерстеллар",
+                    "language": "RU",
+                    "type": "Russian title on kinopoisk",
+                },
+                {"name": "Interstellar", "language": None, "type": "Original title"},
+            ],
+        }
+    )
+    assert title == "Интерстеллар"

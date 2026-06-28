@@ -1,4 +1,8 @@
-from app.content_filters import filter_movies, has_excluded_genre
+from app.content_filters import (
+    filter_movies,
+    has_excluded_country,
+    has_excluded_genre,
+)
 from app.models import MovieItem
 
 
@@ -19,7 +23,13 @@ def _movie(**kwargs) -> MovieItem:
 
 def test_has_excluded_genre():
     assert has_excluded_genre(_movie(genres=["мультфильм"]))
+    assert has_excluded_genre(_movie(genres=["концерт"]))
     assert not has_excluded_genre(_movie(genres=["детектив"]))
+
+
+def test_has_excluded_country():
+    assert has_excluded_country(_movie(countries=["Индия", "США"]))
+    assert not has_excluded_country(_movie(countries=["Россия"]))
 
 
 def test_filter_movies_respects_limit_without_padding():
