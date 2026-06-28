@@ -3,7 +3,13 @@ import os
 
 from dotenv import load_dotenv
 from telegram.error import Conflict
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from app.agent import MovieAgent
 from app.bot_handlers import (
@@ -12,7 +18,6 @@ from app.bot_handlers import (
     start_command,
     text_search_hint,
 )
-from app.keyboards import MAIN_KEYBOARD
 from app.logging_setup import setup_logging
 
 load_dotenv()
@@ -28,14 +33,19 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     error = context.error
     if isinstance(error, Conflict):
         logger.warning(
-            "Conflict: another bot instance is polling (stop duplicate python main.py processes)"
+            "Conflict: another bot instance is polling "
+            "(stop duplicate python main.py processes)"
         )
         return
 
     logger.error("Unhandled error: %s", error, exc_info=error)
 
 
-def main():
+async def on_shutdown(_: object) -> None:
+    await agent.close()
+
+
+def main() -> None:
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN is not set in .env")
 
@@ -46,6 +56,7 @@ def main():
         .write_timeout(120)
         .connect_timeout(120)
         .pool_timeout(120)
+        .post_shutdown(on_shutdown)
         .build()
     )
 

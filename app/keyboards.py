@@ -1,21 +1,21 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 
-from app.tmdb_client import COUNTRY_NAMES
+from app.query_parser import COUNTRY_ISO_TO_NAME
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [["🔍 Поиск по тексту", "⚙️ Подбор по фильтрам"]],
     resize_keyboard=True,
 )
 
-GENRE_OPTIONS: list[tuple[str, list[int] | None]] = [
-    ("🕵 Детектив", [80, 9648]),
-    ("😂 Комедия", [35]),
-    ("🎭 Драма", [18]),
-    ("👻 Ужасы", [27]),
-    ("🚀 Фантастика", [878]),
-    ("💥 Боевик", [28]),
-    ("💘 Мелодрама", [10749]),
-    ("🔪 Триллер", [53]),
+GENRE_OPTIONS: list[tuple[str, list[str]]] = [
+    ("🕵 Детектив", ["детектив"]),
+    ("😂 Комедия", ["комедия"]),
+    ("🎭 Драма", ["драма"]),
+    ("👻 Ужасы", ["ужасы"]),
+    ("🚀 Фантастика", ["фантастика"]),
+    ("💥 Боевик", ["боевик"]),
+    ("💘 Мелодрама", ["мелодрама"]),
+    ("🔪 Триллер", ["триллер"]),
 ]
 
 YEAR_OPTIONS = [2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018]
@@ -25,16 +25,16 @@ COMPANY_PRESETS: list[tuple[str, str]] = [
     ("Marvel", "Marvel"),
     ("HBO", "HBO"),
     ("Disney", "Disney"),
-    ("Warner", "Warner Bros"),
-    ("Amazon", "Amazon Studios"),
+    ("Warner", "Warner"),
+    ("Amazon", "Amazon"),
 ]
 
 
 def genre_keyboard() -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
-    for label, ids in GENRE_OPTIONS:
-        data = "genre:skip" if ids is None else "genre:" + "|".join(str(i) for i in ids)
+    for label, names in GENRE_OPTIONS:
+        data = "genre:" + "|".join(names)
         row.append(InlineKeyboardButton(label, callback_data=data))
         if len(row) == 2:
             rows.append(row)
@@ -62,7 +62,7 @@ def year_keyboard() -> InlineKeyboardMarkup:
 def country_keyboard() -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
-    for iso, name in COUNTRY_NAMES.items():
+    for iso, name in COUNTRY_ISO_TO_NAME.items():
         row.append(InlineKeyboardButton(name, callback_data=f"country:{iso}"))
         if len(row) == 3:
             rows.append(row)
@@ -74,11 +74,7 @@ def country_keyboard() -> InlineKeyboardMarkup:
 
 
 def media_keyboard(exclude_animation: bool) -> InlineKeyboardMarkup:
-    anim_label = (
-        "✅ Без мультфильмов"
-        if exclude_animation
-        else "⬜ Без мультфильмов"
-    )
+    anim_label = "✅ Без мультфильмов" if exclude_animation else "⬜ Без мультфильмов"
     return InlineKeyboardMarkup(
         [
             [

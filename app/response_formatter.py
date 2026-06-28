@@ -1,43 +1,41 @@
-from dataclasses import dataclass
+from __future__ import annotations
 
-
-@dataclass
-class RecommendationCard:
-    title: str
-    year: str
-    rating: str
-    countries: str
-    genres: str
-    overview: str
-    kinopoisk_url: str
+from app.models import MovieItem
+from app.platform_labels import platform_label
+from app.telegram_utils import truncate_description
 
 
 def format_recommendations(
-    cards: list[RecommendationCard],
+    movies: list[MovieItem],
     media_type: str,
     *,
     requested: int,
 ) -> str:
-    if not cards:
+    if not movies:
         return ""
 
     icon = "📺" if media_type == "tv" else "🎬"
     kind = "сериалов" if media_type == "tv" else "фильмов"
     lines: list[str] = []
 
-    if len(cards) < requested:
-        lines.append(
-            f"Нашёл {len(cards)} из {requested} запрошенных {kind} в TMDB:\n"
-        )
+    if len(movies) < requested:
+        lines.append(f"Нашёл {len(movies)} из {requested} запрошенных {kind}:\n")
     else:
-        lines.append(f"Подборка из {len(cards)} {kind}:\n")
+        lines.append(f"Подборка из {len(movies)} {kind}:\n")
 
-    for card in cards:
-        lines.append(f"{icon} {card.title} ({card.year})")
-        lines.append(f"⭐ {card.rating} | {card.countries} | {card.genres}")
-        if card.overview:
-            lines.append(card.overview)
-        lines.append(f"Кинопоиск: {card.kinopoisk_url}")
+    for movie in movies:
+        year = str(movie.year) if movie.year else "—"
+        lines.append(f"{icon} {movie.title} ({year})")
+        lines.append(
+            f"⭐ {movie.rating_label} | {movie.countries_label} | {movie.genres_label}"
+        )
+        if movie.description:
+            lines.append(truncate_description(movie.description))
+        if movie.watch_platforms:
+            lines.append("Где смотреть:")
+            for platform in movie.watch_platforms:
+                lines.append(f"{platform_label(platform.name)}: {platform.url}")
+        lines.append(f"Кинопоиск: {movie.kinopoisk_url}")
         lines.append("")
 
     return "\n".join(lines).strip()

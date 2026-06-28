@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import re
 
@@ -21,7 +20,8 @@ from app.keyboards import (
     media_keyboard,
     year_keyboard,
 )
-from app.tmdb_client import parse_year
+from app.query_parser import parse_year
+from app.telegram_utils import split_telegram_message
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +29,18 @@ GENRE, YEAR, COUNTRY, MEDIA, COMPANY = range(5)
 
 TEXT_SEARCH_HINT = (
     "Напишите запрос текстом, например:\n"
+    "• Интерстеллар — поиск по названию\n"
+    "• похожие на Интерстеллар — по стилю и жанру\n"
     "• 3 детективных сериала России 2021\n"
     "• фильмы Netflix\n"
-    "• Marvel без мультфильмов\n"
+    "• Marvel 2021\n"
     "• HBO сериал 2020"
 )
 
 
 def _default_filters() -> dict:
     return {
-        "genre_ids": None,
+        "genre_names": None,
         "year": None,
         "country_iso": None,
         "media_type": "movie",
@@ -62,12 +64,11 @@ def build_filter_conversation(agent: MovieAgent) -> ConversationHandler:
         await query.answer()
         data = query.data.removeprefix("genre:")
         if data != "skip":
-            context.user_data["filters"]["genre_ids"] = [
-                int(part) for part in data.split("|")
-            ]
+            context.user_data["filters"]["genre_names"] = data.split("|")
         await query.edit_message_text(
             "Шаг 2/5 — год выхода.\n"
-            "Выберите год, введите его текстом (например 2017) или нажмите «Пропустить»:",
+            "Выберите год, введите текстом (например 2017) "
+            "или нажмите «Пропустить»:",
             reply_markup=year_keyboard(),
         )
         return YEAR
@@ -201,14 +202,13 @@ def build_filter_conversation(agent: MovieAgent) -> ConversationHandler:
     )
 
 
-async def _run_filter_search(message, context: ContextTypes.DEFAULT_TYPE, agent: MovieAgent) -> int:
-    await message.reply_text("Ищу в TMDB...")
+async def _run_filter_search(
+    message, context: ContextTypes.DEFAULT_TYPE, agent: MovieAgent
+) -> int:
+    await message.reply_text("Ищу в Kinopoisk...")
     try:
-        answer = await asyncio.to_thread(
-            agent.search_from_filters,
-            context.user_data.get("filters", {}),
-        )
-        await message.reply_text(answer, reply_markup=MAIN_KEYBOARD)
+        answer = await agent.search_from_ui(context.user_data.get("filters", {}))
+        await send_long_reply(message, answer)
     except Exception:
         logger.exception("Filter search failed")
         await message.reply_text(
@@ -221,7 +221,7 @@ async def _run_filter_search(message, context: ContextTypes.DEFAULT_TYPE, agent:
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "Привет! Я подбираю фильмы и сериалы через TMDB.\n\n"
+        "Привет! Я подбираю фильмы и сериалы через Kinopoisk.\n\n"
         "⚙️ Подбор по фильтрам — пошаговый выбор жанра, года, страны, типа и студии.\n"
         "🔍 Поиск по тексту — свободный запрос, включая Netflix, Marvel, HBO.\n\n"
         "Отмена подбора: /cancel",
@@ -236,6 +236,15 @@ async def text_search_hint(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 MENU_BUTTONS = re.compile(r"^(🔍 Поиск по тексту|⚙️ Подбор по фильтрам|Отмена)$")
 
 
+async def send_long_reply(message, text: str, *, reply_markup=MAIN_KEYBOARD) -> None:
+    chunks = split_telegram_message(text)
+    for index, chunk in enumerate(chunks):
+        await message.reply_text(
+            chunk,
+            reply_markup=reply_markup if index == len(chunks) - 1 else None,
+        )
+
+
 def build_text_search_handler(agent: MovieAgent) -> MessageHandler:
     async def handle_text_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message or not update.message.text:
@@ -247,11 +256,11 @@ def build_text_search_handler(agent: MovieAgent) -> MessageHandler:
         user_id = update.effective_user.id if update.effective_user else "unknown"
         logger.info("Text search from user_id=%s: %s", user_id, user_text[:120])
 
-        await update.message.reply_text("Ищу в TMDB...")
+        await update.message.reply_text("Ищу в Kinopoisk...")
 
         try:
-            answer = await asyncio.to_thread(agent.ask, user_text)
-            await update.message.reply_text(answer, reply_markup=MAIN_KEYBOARD)
+            answer = await agent.ask(user_text)
+            await send_long_reply(update.message, answer)
         except Exception:
             logger.exception("Text search failed for user_id=%s", user_id)
             await update.message.reply_text(

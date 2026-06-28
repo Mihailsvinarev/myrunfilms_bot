@@ -1,51 +1,45 @@
-from app.response_formatter import RecommendationCard, format_recommendations
+from app.models import MovieItem, WatchPlatform
+from app.response_formatter import format_recommendations
 
-KP = "https://www.kinopoisk.ru/index.php?kp_query=test"
 
-
-def test_format_recommendations_full_count():
-    cards = [
-        RecommendationCard(
-            title="Сериал А",
-            year="2021",
-            rating="7.5",
-            countries="Россия",
-            genres="Детектив",
-            overview="Описание А",
-            kinopoisk_url=KP,
-        ),
-        RecommendationCard(
-            title="Сериал Б",
-            year="2021",
-            rating="8.0",
-            countries="Россия",
-            genres="Детектив",
-            overview="",
-            kinopoisk_url=KP,
-        ),
+def test_format_recommendations_with_kinopoisk_link():
+    movies = [
+        MovieItem(
+            id=42,
+            title="Тестовый фильм",
+            year=2021,
+            rating=8.1,
+            countries=["Россия"],
+            genres=["детектив"],
+            description="Описание на русском.",
+            is_series=False,
+        )
     ]
-    text = format_recommendations(cards, "tv", requested=2)
-    assert "Подборка из 2 сериалов" in text
-    assert "Сериал А" in text
-    assert "Кинопоиск:" in text
-    assert "kinopoisk.ru" in text
+    text = format_recommendations(movies, "movie", requested=3)
+    assert "Нашёл 1 из 3" in text
+    assert "Кинопоиск: https://www.kinopoisk.ru/film/42/" in text
 
 
-def test_format_recommendations_partial_count():
-    cards = [
-        RecommendationCard(
-            title="Сериал А",
-            year="2021",
-            rating="7.5",
-            countries="Россия",
-            genres="Детектив",
-            overview="Описание",
-            kinopoisk_url=KP,
-        ),
+def test_format_recommendations_with_watch_platforms():
+    movies = [
+        MovieItem(
+            id=42,
+            title="Тестовый фильм",
+            year=2021,
+            rating=8.1,
+            countries=["Россия"],
+            genres=["детектив"],
+            description="Описание на русском.",
+            is_series=False,
+            watch_platforms=[
+                WatchPlatform(name="Иви", url="https://ivi.ru/watch/1"),
+                WatchPlatform(name="START", url="https://start.ru/watch/1"),
+            ],
+        )
     ]
-    text = format_recommendations(cards, "tv", requested=3)
-    assert "Нашёл 1 из 3 запрошенных сериалов" in text
+    text = format_recommendations(movies, "movie", requested=1)
 
+    assert "Где смотреть:" in text
+    assert "IVI: https://ivi.ru/watch/1" in text
+    assert "START: https://start.ru/watch/1" in text
 
-def test_format_recommendations_empty():
-    assert format_recommendations([], "movie", requested=5) == ""

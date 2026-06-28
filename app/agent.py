@@ -1,134 +1,83 @@
+from __future__ import annotations
+
 import logging
 
-from app.context_builder import build_recommendation_cards
+import httpx
+
+from app.content_filters import filter_movies
+from app.kinopoisk_client import KinopoiskClient
 from app.messages import no_results_message
+from app.models import SearchFilters
+from app.query_parser import filters_from_ui, is_director_request, parse_search_filters
 from app.response_formatter import format_recommendations
-from app.search_request import SearchRequest
-from app.tmdb_client import (
-    discover,
-    is_director_request,
-    parse_company,
-    parse_count,
-    parse_country_iso,
-    parse_exclude_animation,
-    parse_genres,
-    parse_media_type,
-    parse_year,
-    resolve_company_id,
-    resolve_network_id,
-    search_person,
-)
 
 logger = logging.getLogger(__name__)
 
 
 class MovieAgent:
+    def __init__(self, client: KinopoiskClient | None = None):
+        self.client = client or KinopoiskClient()
 
-    def _resolve_studio(
-        self, request: SearchRequest
-    ) -> tuple[int | None, int | None, str | None]:
-        """Returns (company_id, network_id, error_message)."""
-        if request.company_id:
-            return request.company_id, None, None
+    async def close(self) -> None:
+        await self.client.close()
 
-        query = request.company_query
-        if not query:
-            return None, None, None
-
-        if request.media_type == "tv":
-            network_id = resolve_network_id(query)
-            if network_id:
-                return None, network_id, None
-
-        company_id = resolve_company_id(query)
-        if not company_id:
-            return None, None, f"Не удалось найти студию «{query}» в TMDB."
-        return company_id, None, None
-
-    def search(self, request: SearchRequest) -> str:
-        company_id, network_id, error = self._resolve_studio(request)
-        if error:
-            return error
-
+    async def search(self, filters: SearchFilters) -> str:
         logger.info(
-            "Search type=%s year=%s country=%s genres=%s count=%s "
-            "animation_excluded=%s company=%s network_id=%s",
-            request.media_type,
-            request.year,
-            request.country_iso,
-            request.genre_ids,
-            request.count,
-            request.exclude_animation,
-            request.company_query,
-            network_id,
+            "Search mode=%s type=%s year=%s country=%s genres=%s count=%s "
+            "company=%s title=%s",
+            filters.query_mode,
+            filters.media_type,
+            filters.year,
+            filters.country_name,
+            filters.genre_names,
+            filters.count,
+            filters.company_query,
+            filters.title_query,
         )
 
-        with_crew = request.with_crew
-        if request.user_text and is_director_request(request.user_text):
-            persons = search_person(request.user_text)
-            if not persons:
-                return (
-                    "Не удалось найти режиссёра в TMDB. "
-                    "Уточните имя и попробуйте снова."
+        try:
+            if filters.query_mode == "title" and filters.title_query:
+                raw = await self.client.search_by_title(
+                    filters.title_query, filters
                 )
-            with_crew = persons[0]["id"]
+            elif filters.query_mode == "similar" and filters.title_query:
+                raw = await self.client.search_similar(
+                    filters.title_query, filters
+                )
+            elif filters.user_text and is_director_request(filters.user_text):
+                raw = await self.client.search_by_text(filters.user_text, filters)
+            else:
+                raw = await self.client.search(filters)
+        except RuntimeError as exc:
+            return str(exc)
+        except httpx.HTTPStatusError as exc:
+            logger.error("Kinopoisk HTTP %s: %s", exc.response.status_code, exc.request.url)
+            return f"Kinopoisk API вернул ошибку {exc.response.status_code}. Попробуйте позже."
+        except httpx.HTTPError:
+            logger.exception("Kinopoisk network error")
+            return "Не удалось связаться с Kinopoisk API. Попробуйте позже."
+        except Exception:
+            logger.exception("Kinopoisk search failed")
+            return "Ошибка при обращении к Kinopoisk API. Попробуйте позже."
 
-        items = discover(
-            request.media_type,
-            year=request.year,
-            country_iso=request.country_iso,
-            genre_ids=request.genre_ids,
-            with_crew=with_crew,
-            exclude_animation=request.exclude_animation,
-            company_id=company_id,
-            network_id=network_id,
+        movies = filter_movies(raw, limit=filters.count)
+        movies = await self.client.enrich_watchability(movies)
+        logger.info("Filtered to %d movies", len(movies))
+
+        if not movies:
+            return no_results_message(filters)
+
+        formatted = format_recommendations(
+            movies, filters.media_type, requested=filters.count
         )
-        logger.info("Discover returned %d items", len(items))
+        if filters.query_mode == "similar" and filters.title_query:
+            return f"Похожие на «{filters.title_query}»:\n\n{formatted}"
+        return formatted
 
-        if not items:
-            return no_results_message(
-                request.media_type,
-                request.year,
-                request.country_iso,
-                request.genre_ids,
-                company_query=request.company_query,
-                exclude_animation=request.exclude_animation,
-            )
+    async def ask(self, user_text: str) -> str:
+        filters = parse_search_filters(user_text)
+        return await self.search(filters)
 
-        cards = build_recommendation_cards(items, request.media_type, limit=request.count)
-        if not cards:
-            return no_results_message(
-                request.media_type,
-                request.year,
-                request.country_iso,
-                request.genre_ids,
-                company_query=request.company_query,
-                exclude_animation=request.exclude_animation,
-            )
-
-        return format_recommendations(cards, request.media_type, requested=request.count)
-
-    def ask(self, user_text: str) -> str:
-        request = SearchRequest(
-            media_type=parse_media_type(user_text),
-            year=parse_year(user_text),
-            country_iso=parse_country_iso(user_text),
-            genre_ids=parse_genres(user_text),
-            count=parse_count(user_text),
-            exclude_animation=parse_exclude_animation(user_text),
-            company_query=parse_company(user_text),
-            user_text=user_text,
-        )
-        return self.search(request)
-
-    def search_from_filters(self, filters: dict) -> str:
-        request = SearchRequest(
-            media_type=filters.get("media_type", "movie"),
-            year=filters.get("year"),
-            country_iso=filters.get("country_iso"),
-            genre_ids=filters.get("genre_ids"),
-            count=filters.get("count", 5),
-            exclude_animation=filters.get("exclude_animation", False),
-            company_query=filters.get("company_query"),
-        )
-        return self.search(request)
+    async def search_from_ui(self, data: dict) -> str:
+        filters = filters_from_ui(data)
+        return await self.search(filters)
