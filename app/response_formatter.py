@@ -9,6 +9,7 @@ class RecommendationCard:
     countries: str
     genres: str
     overview: str
+    kinopoisk_url: str
 
 
 def format_recommendations(
@@ -36,6 +37,7 @@ def format_recommendations(
         lines.append(f"⭐ {card.rating} | {card.countries} | {card.genres}")
         if card.overview:
             lines.append(card.overview)
+        lines.append(f"Кинопоиск: {card.kinopoisk_url}")
         lines.append("")
 
     return "\n".join(lines).strip()

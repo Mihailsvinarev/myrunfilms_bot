@@ -1,13 +1,18 @@
-import asyncio
 import logging
 import os
 
 from dotenv import load_dotenv
-from telegram import Update
 from telegram.error import Conflict
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 from app.agent import MovieAgent
+from app.bot_handlers import (
+    build_filter_conversation,
+    build_text_search_handler,
+    start_command,
+    text_search_hint,
+)
+from app.keyboards import MAIN_KEYBOARD
 from app.logging_setup import setup_logging
 
 load_dotenv()
@@ -17,27 +22,6 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 agent = MovieAgent()
-
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
-
-    user_text = update.message.text
-    user_id = update.effective_user.id if update.effective_user else "unknown"
-    logger.info("Message from user_id=%s: %s", user_id, user_text[:120])
-
-    await update.message.reply_text("Думаю над фильмами...")
-
-    try:
-        answer = await asyncio.to_thread(agent.ask, user_text)
-        await update.message.reply_text(answer)
-        logger.info("Reply sent to user_id=%s", user_id)
-    except Exception:
-        logger.exception("Failed to process message from user_id=%s", user_id)
-        await update.message.reply_text(
-            "Произошла ошибка при обработке запроса. Попробуйте позже."
-        )
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -65,7 +49,15 @@ def main():
         .build()
     )
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(build_filter_conversation(agent))
+    app.add_handler(
+        MessageHandler(
+            filters.Regex(r"^🔍 Поиск по тексту$"),
+            text_search_hint,
+        )
+    )
+    app.add_handler(build_text_search_handler(agent))
     app.add_error_handler(error_handler)
 
     logger.info("Movie AI Bot started")

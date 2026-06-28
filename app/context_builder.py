@@ -1,5 +1,10 @@
 import logging
 
+from app.content_filters import (
+    build_kinopoisk_url,
+    has_excluded_genre,
+    has_russian_overview,
+)
 from app.response_formatter import RecommendationCard
 from app.tmdb_client import format_countries, get_details
 
@@ -37,12 +42,28 @@ def build_recommendation_cards(
 ) -> list[RecommendationCard]:
     cards: list[RecommendationCard] = []
 
-    for item in items[:limit]:
+    for item in items:
+        if len(cards) >= limit:
+            break
+
         item_id = item.get("id")
         if not item_id:
             continue
 
+        if has_excluded_genre(item):
+            logger.debug("Skipped item id=%s due to excluded genre in discover", item_id)
+            continue
+
         details = get_details(media_type, item_id)
+
+        if has_excluded_genre(item, details):
+            logger.debug("Skipped item id=%s due to excluded genre in details", item_id)
+            continue
+
+        if not has_russian_overview(item, details):
+            logger.debug("Skipped item id=%s without Russian overview", item_id)
+            continue
+
         title = (
             details.get("title")
             or details.get("name")
@@ -58,20 +79,21 @@ def build_recommendation_cards(
             or item.get("release_date")
             or item.get("first_air_date")
         )
+        year = _format_year(release)
         genres = ", ".join(g["name"] for g in details.get("genres", [])) or "—"
+        overview = _trim_overview(details.get("overview") or item.get("overview"))
 
         cards.append(
             RecommendationCard(
                 title=title,
-                year=_format_year(release),
+                year=year,
                 rating=_format_rating(
                     details.get("vote_average") or item.get("vote_average")
                 ),
                 countries=format_countries(details, media_type),
                 genres=genres,
-                overview=_trim_overview(
-                    details.get("overview") or item.get("overview")
-                ),
+                overview=overview,
+                kinopoisk_url=build_kinopoisk_url(title, year),
             )
         )
         logger.debug("Built card for %s (id=%s)", title, item_id)

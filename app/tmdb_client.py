@@ -2,6 +2,7 @@ import re
 import requests
 
 from app.config import TMDB_API_KEY
+from app.content_filters import excluded_genres_param, filter_excluded_genres
 
 BASE_URL = "https://api.themoviedb.org/3"
 LANG = "ru-RU"
@@ -61,6 +62,31 @@ COUNTRY_NAMES: dict[str, str] = {
     "IN": "Индия",
 }
 
+ANIMATION_GENRE_ID = 16
+
+COMPANY_KEYWORDS: dict[str, str] = {
+    "netflix": "Netflix",
+    "нетflix": "Netflix",
+    "marvel": "Marvel",
+    "мarvel": "Marvel",
+    "hbo": "HBO",
+    "disney": "Disney",
+    "warner": "Warner Bros",
+    "amazon": "Amazon Studios",
+    "apple tv": "Apple TV",
+    "pixar": "Pixar",
+    "dc": "DC Entertainment",
+}
+
+# TMDB network IDs for streaming platforms (TV discover uses with_networks)
+STREAMING_NETWORKS: dict[str, int] = {
+    "Netflix": 213,
+    "HBO": 49,
+    "Disney": 2739,
+    "Amazon Studios": 1024,
+    "Apple TV": 2552,
+}
+
 
 def _get(url, params=None):
     if params is None:
@@ -84,17 +110,30 @@ def _genre_param(genre_ids: list[int] | None) -> str | None:
     return "|".join(str(g) for g in unique)
 
 
+def _vote_count_minimum(year: int | None, media_type: str) -> int:
+    if year is not None and year >= 2024:
+        return 5
+    if media_type == "tv":
+        return 20
+    return 50
+
+
 def _discover_params(
     *,
     year: int | None = None,
     country_iso: str | None = None,
     genre_ids: list[int] | None = None,
     with_crew: int | None = None,
+    exclude_animation: bool = False,
+    company_id: int | None = None,
+    network_id: int | None = None,
     year_key: str,
+    media_type: str = "movie",
+    vote_count_min: int | None = None,
 ) -> dict:
     params: dict = {
         "sort_by": "vote_average.desc",
-        "vote_count.gte": 50,
+        "vote_count.gte": vote_count_min or _vote_count_minimum(year, media_type),
         "include_adult": "false",
     }
 
@@ -107,6 +146,13 @@ def _discover_params(
     if with_crew is not None:
         params["with_crew"] = with_crew
 
+    params["without_genres"] = excluded_genres_param()
+
+    if network_id is not None:
+        params["with_networks"] = str(network_id)
+    elif company_id is not None:
+        params["with_companies"] = str(company_id)
+
     return params
 
 
@@ -116,6 +162,8 @@ def discover_movies(
     country_iso: str | None = None,
     genre_ids: list[int] | None = None,
     with_crew: int | None = None,
+    exclude_animation: bool = False,
+    company_id: int | None = None,
 ) -> list[dict]:
     url = f"{BASE_URL}/discover/movie"
     params = _discover_params(
@@ -123,9 +171,13 @@ def discover_movies(
         country_iso=country_iso,
         genre_ids=genre_ids,
         with_crew=with_crew,
+        exclude_animation=exclude_animation,
+        company_id=company_id,
         year_key="primary_release_year",
+        media_type="movie",
     )
     results = _get(url, params).get("results", [])
+    results = filter_excluded_genres(results)
     return _filter_by_origin_country(results, country_iso)
 
 
@@ -135,6 +187,9 @@ def discover_tv(
     country_iso: str | None = None,
     genre_ids: list[int] | None = None,
     with_crew: int | None = None,
+    exclude_animation: bool = False,
+    company_id: int | None = None,
+    network_id: int | None = None,
 ) -> list[dict]:
     url = f"{BASE_URL}/discover/tv"
     params = _discover_params(
@@ -142,9 +197,28 @@ def discover_tv(
         country_iso=country_iso,
         genre_ids=genre_ids,
         with_crew=with_crew,
+        exclude_animation=exclude_animation,
+        company_id=company_id,
+        network_id=network_id,
         year_key="first_air_date_year",
+        media_type="tv",
     )
     results = _get(url, params).get("results", [])
+    if not results and params.get("vote_count.gte", 0) > 5:
+        relaxed = _discover_params(
+            year=year,
+            country_iso=country_iso,
+            genre_ids=genre_ids,
+            with_crew=with_crew,
+            exclude_animation=exclude_animation,
+            company_id=company_id,
+            network_id=network_id,
+            year_key="first_air_date_year",
+            media_type="tv",
+            vote_count_min=0,
+        )
+        results = _get(url, relaxed).get("results", [])
+    results = filter_excluded_genres(results)
     return _filter_by_origin_country(results, country_iso)
 
 
@@ -170,6 +244,9 @@ def discover(
     country_iso: str | None = None,
     genre_ids: list[int] | None = None,
     with_crew: int | None = None,
+    exclude_animation: bool = False,
+    company_id: int | None = None,
+    network_id: int | None = None,
 ) -> list[dict]:
     if media_type == "tv":
         return discover_tv(
@@ -177,12 +254,17 @@ def discover(
             country_iso=country_iso,
             genre_ids=genre_ids,
             with_crew=with_crew,
+            exclude_animation=exclude_animation,
+            company_id=company_id,
+            network_id=network_id,
         )
     return discover_movies(
         year=year,
         country_iso=country_iso,
         genre_ids=genre_ids,
         with_crew=with_crew,
+        exclude_animation=exclude_animation,
+        company_id=company_id,
     )
 
 
@@ -312,3 +394,45 @@ def search_person(query: str):
 def is_director_request(text: str) -> bool:
     lowered = text.lower()
     return "режиссер" in lowered or "режиссёр" in lowered
+
+
+def parse_company(text: str) -> str | None:
+    lowered = text.lower()
+    for keyword, query in COMPANY_KEYWORDS.items():
+        if keyword in lowered:
+            return query
+    return None
+
+
+def parse_exclude_animation(text: str) -> bool:
+    lowered = text.lower()
+    phrases = (
+        "без мульт",
+        "не мульт",
+        "исключить мульт",
+        "без анима",
+        "не анима",
+    )
+    return any(phrase in lowered for phrase in phrases)
+
+
+def search_company(query: str) -> list[dict]:
+    url = f"{BASE_URL}/search/company"
+    return _get(url, {"query": query}).get("results", [])
+
+
+def resolve_company_id(company_query: str) -> int | None:
+    results = search_company(company_query)
+    if results:
+        return results[0]["id"]
+    return None
+
+
+def resolve_network_id(company_query: str) -> int | None:
+    if not company_query:
+        return None
+    query_lower = company_query.lower()
+    for name, network_id in STREAMING_NETWORKS.items():
+        if name.lower() in query_lower:
+            return network_id
+    return None

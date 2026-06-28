@@ -8,9 +8,9 @@ Telegram-бот для подбора фильмов и сериалов по з
 
 ## Возможности
 
-- Поиск фильмов и сериалов через TMDB Discover API
-- Фильтры: жанр, страна, год, количество («3 сериала»)
-- Режим «фильмы режиссёра» (`with_crew`)
+- **Подбор по фильтрам** (кнопки): жанр → год → страна → фильм/сериал → без мультфильмов → студия
+- **Поиск по тексту**: свободный запрос с жанром, страной, годом, студией (Netflix, Marvel, HBO…)
+- Фильтры через TMDB Discover API
 - Ответ собирается в коде из данных TMDB — названия не выдумываются
 
 ---
@@ -70,13 +70,22 @@ python main.py
 
 - `российский сериал 2020 детектив`
 - `фильм комедия 2015`
-- `фильмы режиссёра Кристофера Нолана`
+- `фильмы Netflix без мультфильмов`
+- `Marvel 2021`
+- `/filters` или кнопка «⚙️ Подбор по фильтрам»
 
 ---
 
 ## Тесты
 
-Проверка TMDB Discover (нужен `TMDB_API_KEY` в `.env`):
+Автотесты (без сети, TMDB и Telegram замоканы):
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest
+```
+
+Ручная проверка TMDB API (нужен `TMDB_API_KEY` в `.env`):
 
 ```bash
 python test_tmdb.py
@@ -93,11 +102,16 @@ movie_ai_bot/
 │   ├── agent.py
 │   ├── tmdb_client.py
 │   ├── context_builder.py
-│   ├── llm_client.py
+│   ├── response_formatter.py
 │   ├── messages.py
 │   ├── logging_setup.py
-│   ├── config.py
-│   └── prompts.py
+│   └── config.py
+├── tests/
+│   ├── test_intent.py
+│   ├── test_tmdb_client.py
+│   ├── test_agent.py
+│   └── ...
 ├── test_tmdb.py
-└── requirements.txt
+├── requirements.txt
+└── requirements-dev.txt
 ```
