@@ -59,6 +59,8 @@ class KinopoiskClient:
             raise RuntimeError("KINOPOISK_API_KEY is not set in .env")
 
         fetch_limit = min(max(filters.count * 4, 20), 50)
+        if filters.topic_query:
+            return await self.search_by_text(filters.topic_query, filters)
         if filters.company_query and filters.company_query in COMPANY_NETWORKS:
             movies = await self._search_by_filters(filters, limit=fetch_limit)
             return self._apply_client_filters(
@@ -125,28 +127,62 @@ class KinopoiskClient:
             return []
 
         reference = references[0]
-        client = await self._get_client()
-        response = await client.get(f"/movie/{reference.id}")
-        response.raise_for_status()
-        detail = response.json()
-        genres = [
-            genre.get("name", "")
-            for genre in detail.get("genres") or []
-            if genre.get("name")
-        ]
-        if not genres:
+        similar_ids = await self._fetch_similar_movie_ids(reference.id)
+        if not similar_ids:
+            logger.info(
+                "Similar search: no similarMovies for reference_id=%s title=%s",
+                reference.id,
+                reference.title,
+            )
             return []
 
-        genre_filters = filters.model_copy(
-            update={
-                "genre_names": genres[:3],
-                "query_mode": "filter",
-            }
-        )
         fetch_limit = min(max(filters.count * 4, 20), 50)
-        movies = await self._search_by_filters(genre_filters, limit=fetch_limit)
+        ids_to_fetch = [
+            movie_id
+            for movie_id in similar_ids[:fetch_limit]
+            if movie_id != reference.id
+        ]
+        if not ids_to_fetch:
+            return []
+
+        params: list[tuple[str, str | int]] = [
+            ("page", 1),
+            ("limit", len(ids_to_fetch)),
+            ("notNullField", "poster.url"),
+            ("id", ",".join(str(movie_id) for movie_id in ids_to_fetch)),
+        ]
+        self._append_global_exclusions(params)
+
+        movies = await self._fetch_movies(params)
         movies = self._apply_client_filters(movies, filters)
-        return [movie for movie in movies if movie.id != reference.id]
+        movies_by_id = {movie.id: movie for movie in movies}
+        ordered: list[MovieItem] = []
+        for movie_id in ids_to_fetch:
+            movie = movies_by_id.get(movie_id)
+            if movie is not None:
+                ordered.append(movie)
+        logger.info(
+            "Similar search reference_id=%s title=%s results=%d",
+            reference.id,
+            reference.title,
+            len(ordered),
+        )
+        return ordered
+
+    async def _fetch_similar_movie_ids(self, reference_id: int) -> list[int]:
+        client = await self._get_client()
+        response = await client.get(f"/movie/{reference_id}")
+        response.raise_for_status()
+        similar_raw = response.json().get("similarMovies") or []
+        similar_ids: list[int] = []
+        for item in similar_raw:
+            if not isinstance(item, dict):
+                continue
+            raw_id = item.get("id")
+            if raw_id is None:
+                continue
+            similar_ids.append(int(raw_id))
+        return similar_ids
 
     async def search_by_text(
         self, query: str, filters: SearchFilters
@@ -270,6 +306,7 @@ class KinopoiskClient:
         params: list[tuple[str, str | int]] = [
             ("page", 1),
             ("limit", limit),
+            ("notNullField", "poster.url"),
             ("sortField", "rating.kp"),
             ("sortType", -1),
         ]

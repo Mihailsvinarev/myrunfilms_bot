@@ -83,7 +83,7 @@ async def test_resolve_search_filters_uses_heuristic_when_gigachat_unavailable()
 
     giga.parse_query.assert_not_called()
     assert filters.query_mode == "filter"
-    assert filters.genre_names == ["детектив"]
+    assert filters.genre_names == ["детектив", "триллер"]
 
 
 @pytest.mark.asyncio
@@ -98,4 +98,47 @@ async def test_resolve_search_filters_uses_heuristic_when_gigachat_fails():
     )
 
     assert filters.query_mode == "filter"
-    assert filters.genre_names == ["детектив"]
+    assert filters.genre_names == ["детектив", "триллер"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_search_filters_applies_topic_intent_from_text():
+    giga = AsyncMock()
+    giga.is_available = MagicMock(return_value=True)
+    giga.parse_query = AsyncMock(return_value=QueryFilters(count=5))
+    giga.to_search_filters = MagicMock(
+        return_value=SearchFilters(
+            count=5,
+            query_mode="filter",
+            media_type="movie",
+        )
+    )
+
+    filters = await resolve_search_filters(
+        "Сериал про теннис",
+        ai_parser=giga,
+    )
+
+    assert filters.query_mode == "filter"
+    assert filters.media_type == "tv"
+    assert filters.topic_query == "теннис"
+    assert filters.genre_names == ["спорт"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_search_filters_applies_similar_intent_from_text():
+    giga = AsyncMock()
+    giga.is_available = MagicMock(return_value=True)
+    giga.parse_query = AsyncMock(return_value=QueryFilters(count=5))
+    giga.to_search_filters = MagicMock(
+        return_value=SearchFilters(count=5, query_mode="filter")
+    )
+
+    filters = await resolve_search_filters(
+        "посоветуй фильм как Интерстеллар",
+        ai_parser=giga,
+    )
+
+    giga.parse_query.assert_awaited_once()
+    assert filters.query_mode == "similar"
+    assert filters.title_query == "Интерстеллар"

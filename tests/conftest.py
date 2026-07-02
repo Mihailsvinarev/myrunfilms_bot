@@ -14,4 +14,5 @@ def sample_movie() -> MovieItem:
         genres=["детектив", "драма"],
         description="Полное описание сериала на русском языке.",
         is_series=True,
+        poster_url="https://example.com/poster.jpg",
     )

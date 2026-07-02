@@ -9,7 +9,6 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from app.agent import MovieAgent
 from app.bot_handlers import (
     build_collection_callbacks,
     build_collections_handler,
@@ -17,9 +16,11 @@ from app.bot_handlers import (
     build_text_search_handler,
     start_command,
 )
+from app.composition import build_app_services
 from app.handlers.common import AGENT_KEY
 from app.logging_setup import setup_logging
 from app.movie_browser import build_browser_handlers
+from app.protocols import MovieSearchService
 
 load_dotenv()
 setup_logging()
@@ -42,16 +43,16 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def on_shutdown(application) -> None:
-    agent = application.bot_data.get(AGENT_KEY)
-    if isinstance(agent, MovieAgent):
-        await agent.close()
+    service = application.bot_data.get(AGENT_KEY)
+    if isinstance(service, MovieSearchService):
+        await service.close()
 
 
 def main() -> None:
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN is not set in .env")
 
-    agent = MovieAgent()
+    services = build_app_services()
 
     app = (
         ApplicationBuilder()
@@ -63,7 +64,7 @@ def main() -> None:
         .post_shutdown(on_shutdown)
         .build()
     )
-    app.bot_data[AGENT_KEY] = agent
+    app.bot_data[AGENT_KEY] = services.search_service
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(build_filter_conversation())

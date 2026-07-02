@@ -7,10 +7,13 @@ Telegram-бот для подбора фильмов и сериалов. Еди
 ```
 User (Telegram)
     ↓
-main.py                     — polling, DI через bot_data["agent"]
+main.py                     — polling, composition root (build_app_services)
     ↓
-app/handlers/               — Telegram UI (start, filters, collections, text)
-app/movie_browser.py        — карточный просмотр подборок
+app/composition.py          — wiring: KinopoiskClient + GigaChatClient → MovieAgent
+    ↓
+app/handlers/               — Telegram UI (зависят от MovieSearchService Protocol)
+app/telegram_cards.py       — caption и inline-клавиатуры карточек (без Telegram API)
+app/movie_browser.py        — карточный просмотр подборок (send/edit, навигация)
     ↓
 app/agent.py                — оркестрация (async), SearchResult
     ↓
@@ -32,7 +35,8 @@ app/response_formatter.py   — текст ответа (текстовый по
 |--------|----------------|
 | `app/models.py` | `MovieItem`, `SearchFilters`, `SearchResult` |
 | `app/genres.py` | Единый реестр жанров (подборки, /filters, парсер) |
-| `app/protocols.py` | `MovieRepository` Protocol |
+| `app/protocols.py` | Контракты: `MovieRepository`, `NaturalLanguageQueryParser`, `MovieSearchService` |
+| `app/composition.py` | Composition root — единственное место создания конкретных реализаций |
 | `app/collections.py` | Определения подборок, параметры API, фильтрация |
 | `app/query_parser.py` | Парсинг текстового запроса и `/filters` |
 | `app/query_router.py` | GigaChat-first маршрутизация текста |
@@ -43,8 +47,23 @@ app/response_formatter.py   — текст ответа (текстовый по
 | `app/agent.py` | Сценарии поиска и подборок |
 | `app/handlers/` | Telegram handlers по сценариям |
 | `app/keyboards.py` | Telegram-клавиатуры |
-| `app/movie_browser.py` | Карточный UI подборок (навигация, editMessageMedia) |
+| `app/telegram_cards.py` | Компактные caption и клавиатуры карточек (compact / details) |
+| `app/movie_browser.py` | Карточный UI подборок (send_photo, editMessageMedia, state) |
 | `app/messages.py` | Сообщения об ошибках / пустой выдаче |
+
+## SOLID
+
+| Принцип | Как применён |
+|---------|----------------|
+| **S** — Single Responsibility | `agent` — оркестрация; `kinopoisk_client` — HTTP; `query_parser` — intent; `telegram_cards` — caption; `movie_browser` — Telegram I/O |
+| **O** — Open/Closed | Новые подборки — через `COLLECTIONS` в `collections.py`; новые жанры — через `genres.py` |
+| **L** — Liskov Substitution | `KinopoiskClient` и `AsyncMock` взаимозаменяемы как `MovieRepository`; `MovieAgent` — как `MovieSearchService` |
+| **I** — Interface Segregation | Handlers видят только `MovieSearchService`; collections — только `MovieRepository`; router — только `NaturalLanguageQueryParser` |
+| **D** — Dependency Inversion | `main.py` → `build_app_services()`; `MovieAgent` не создаёт клиентов сам; handlers не импортируют `KinopoiskClient` |
+
+**DI:** `app.bot_data[AGENT_KEY]` хранит `MovieSearchService`. Тесты подставляют моки через конструктор `MovieAgent`.
+
+**Ошибки Kinopoisk:** единый wrapper `run_kinopoisk()` для поиска и подборок.
 
 ## Collections flow
 
@@ -52,11 +71,15 @@ app/response_formatter.py   — текст ответа (текстовый по
 2. Inline-меню подборок (`collection:{id}`)
 3. Inline-меню жанров (`collection_genre:{id}:{genre_id}`)
 4. `MovieAgent.fetch_collection()` → `SearchResult` → Kinopoisk `/movie`
-5. `MovieBrowser.open()` — одна карточка, листание без повторных запросов
+5. `MovieBrowser.open()` — одна компактная карточка, листание без повторных запросов
 
-Навигация **без wrap-around**: на первом/последнем фильме кнопки ⬅/➡ неактивны (`browser:noop:*`).
+**Compact mode:** постер + номер + метаданные без описания. Кнопки: навигация, «ℹ Подробнее», Кинопоиск, случайный, подборки.
 
-Состояние: `context.user_data["movie_browser"]` — список, индекс, collection_id, genre_id.
+**Details mode:** то же сообщение редактируется — добавляется описание (≤700 символов) и ссылка. Кнопки: «Назад к карточке», «Следующий», Кинопоиск, подборки.
+
+Навигация **с wrap-around**: с последнего фильма «Следующий» → первый, с первого «Предыдущий» → последний.
+
+Состояние: `context.user_data["movie_browser"]` — список, индекс, `display_mode` (`compact` / `details`), collection_id, genre_id.
 
 ## Data rules
 

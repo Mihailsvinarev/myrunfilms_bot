@@ -49,6 +49,47 @@ def test_query_filters_to_search_filters_maps_mood_and_director():
     assert filters.query_mode == "filter"
 
 
+def test_query_filters_to_search_filters_maps_similar_title():
+    query = QueryFilters(similar_title="Интерстеллар", count=5)
+    filters = query_filters_to_search_filters(query, "посоветуй фильм как Интерстеллар")
+
+    assert filters.query_mode == "similar"
+    assert filters.title_query == "Интерстеллар"
+    assert filters.restrict_media_type is True
+
+
+def test_query_filters_to_search_filters_uses_heuristic_similar_title():
+    query = QueryFilters(count=5)
+    filters = query_filters_to_search_filters(query, "похожие на Матрица")
+
+    assert filters.query_mode == "similar"
+    assert filters.title_query == "Матрица"
+
+
+def test_query_filters_to_search_filters_maps_tennis_topic():
+    query = QueryFilters(
+        media_type="tv",
+        genres=["спорт"],
+        topic="теннис",
+        count=5,
+    )
+    filters = query_filters_to_search_filters(query, "Сериал про теннис")
+
+    assert filters.query_mode == "filter"
+    assert filters.media_type == "tv"
+    assert filters.genre_names == ["спорт"]
+    assert filters.topic_query == "теннис"
+    assert filters.restrict_media_type is True
+
+
+def test_query_filters_to_search_filters_infers_sport_from_mood():
+    query = QueryFilters(media_type="tv", mood="теннис", count=5)
+    filters = query_filters_to_search_filters(query, "Сериал про теннис")
+
+    assert filters.genre_names == ["спорт"]
+    assert filters.topic_query == "теннис"
+
+
 @pytest.mark.asyncio
 async def test_gigachat_token_is_cached():
     oauth_calls = 0

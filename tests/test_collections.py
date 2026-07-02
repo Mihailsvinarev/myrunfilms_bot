@@ -257,6 +257,7 @@ def test_genre_filter_is_applied_in_params_and_client_filter():
         kp_rating=7.0,
         genres=["детектив"],
         countries=["Россия"],
+        poster_url="https://example.com/poster.jpg",
     )
     other = MovieItem(
         id=2,
@@ -265,6 +266,7 @@ def test_genre_filter_is_applied_in_params_and_client_filter():
         kp_rating=7.0,
         genres=["комедия"],
         countries=["Россия"],
+        poster_url="https://example.com/poster.jpg",
     )
 
     assert passes_collection_filters(matching, collection, genre) is True

@@ -10,7 +10,7 @@ from telegram.ext import (
     filters,
 )
 
-from app.handlers.common import get_agent, send_long_reply
+from app.handlers.common import get_agent, present_search_results
 from app.keyboards import (
     MAIN_KEYBOARD,
     company_keyboard,
@@ -19,6 +19,7 @@ from app.keyboards import (
     media_keyboard,
     year_keyboard,
 )
+from app.movie_browser import FILTER_SEARCH_GENRE, FILTER_SEARCH_SOURCE
 from app.query_parser import parse_year
 
 logger = logging.getLogger(__name__)
@@ -45,10 +46,17 @@ def _default_filters() -> dict:
 
 async def _run_filter_search(message, context: ContextTypes.DEFAULT_TYPE) -> int:
     agent = get_agent(context)
-    await message.reply_text("Ищу в Kinopoisk...")
+    status_message = await message.reply_text("Ищу в Kinopoisk...")
     try:
-        answer = await agent.search_from_ui(context.user_data.get("filters", {}))
-        await send_long_reply(message, answer)
+        result = await agent.search_from_ui_movies(context.user_data.get("filters", {}))
+        await present_search_results(
+            message,
+            context,
+            result,
+            source_id=FILTER_SEARCH_SOURCE,
+            genre_id=FILTER_SEARCH_GENRE,
+            status_message=status_message,
+        )
     except Exception:
         logger.exception("Filter search failed")
         await message.reply_text(

@@ -6,9 +6,16 @@ from app.agent import MovieAgent
 from app.models import MovieItem, SearchFilters
 
 
+def _agent(client=None, ai_parser=None) -> MovieAgent:
+    return MovieAgent(
+        client=client or AsyncMock(),
+        ai_parser=ai_parser or AsyncMock(),
+    )
+
+
 @pytest.mark.asyncio
 async def test_agent_search_formats_results():
-    agent = MovieAgent(client=AsyncMock())
+    agent = _agent()
     agent.client.search = AsyncMock(
         return_value=[
             MovieItem(
@@ -20,6 +27,7 @@ async def test_agent_search_formats_results():
                 genres=["детектив"],
                 description="Русское описание сериала.",
                 is_series=True,
+                poster_url="https://example.com/poster.jpg",
             )
         ]
     )
@@ -40,6 +48,61 @@ async def test_agent_search_formats_results():
 
 
 @pytest.mark.asyncio
+async def test_agent_search_movies_returns_search_result():
+    agent = _agent()
+    agent.client.search = AsyncMock(
+        return_value=[
+            MovieItem(
+                id=1,
+                title="Сериал",
+                year=2021,
+                rating=8.0,
+                countries=["Россия"],
+                genres=["детектив"],
+                description="Русское описание сериала.",
+                is_series=True,
+                poster_url="https://example.com/poster.jpg",
+            )
+        ]
+    )
+    agent.client.enrich_watchability = AsyncMock(side_effect=lambda movies: movies)
+
+    result = await agent.search_movies(
+        SearchFilters(
+            media_type="tv",
+            year=2021,
+            country_name="Россия",
+            count=3,
+            query_mode="filter",
+        )
+    )
+
+    assert result.ok is True
+    assert len(result.movies) == 1
+    assert result.movies[0].title == "Сериал"
+    assert result.error is None
+
+
+@pytest.mark.asyncio
+async def test_agent_search_movies_similar_header():
+    agent = _agent()
+    agent.client.search_similar = AsyncMock(return_value=[])
+    agent.client.enrich_watchability = AsyncMock(side_effect=lambda movies: movies)
+
+    result = await agent.search_movies(
+        SearchFilters(
+            query_mode="similar",
+            title_query="Интерстеллар",
+            restrict_media_type=False,
+            count=3,
+        )
+    )
+
+    assert result.ok is False
+    assert result.header is None
+
+
+@pytest.mark.asyncio
 @patch("app.agent.resolve_search_filters", new_callable=AsyncMock)
 async def test_agent_ask_title_search(_mock_resolve):
     _mock_resolve.return_value = SearchFilters(
@@ -48,7 +111,7 @@ async def test_agent_ask_title_search(_mock_resolve):
         restrict_media_type=False,
         user_text="Интерстеллар",
     )
-    agent = MovieAgent(client=AsyncMock())
+    agent = _agent()
     agent.client.search_by_title = AsyncMock(return_value=[])
     agent.client.enrich_watchability = AsyncMock(side_effect=lambda movies: movies)
 
@@ -71,7 +134,7 @@ async def test_agent_ask_parses_text(_mock_resolve):
         query_mode="filter",
         user_text="Сериалы Netflix 2025",
     )
-    agent = MovieAgent(client=AsyncMock())
+    agent = _agent()
     agent.client.search = AsyncMock(return_value=[])
     agent.client.enrich_watchability = AsyncMock(side_effect=lambda movies: movies)
 

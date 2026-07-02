@@ -173,7 +173,40 @@ VAGUE_THEME_HINTS: tuple[tuple[str, list[str]], ...] = (
     ("фантаст", ["фантастика"]),
     ("боевик", ["боевик"]),
     ("приключен", ["приключения"]),
+    ("теннис", ["спорт"]),
+    ("футбол", ["спорт"]),
+    ("хоккей", ["спорт"]),
+    ("баскетбол", ["спорт"]),
+    ("бокс", ["спорт"]),
+    ("спорт", ["спорт"]),
 )
+
+TOPIC_PATTERNS = (
+    re.compile(r"\bпро\s+([a-zA-Zа-яА-ЯёЁ0-9\-]{2,40})", re.IGNORECASE),
+    re.compile(r"\babout\s+([a-zA-Z0-9\- ]{2,40})", re.IGNORECASE),
+)
+
+
+def parse_topic_query(text: str) -> str | None:
+    for pattern in TOPIC_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        topic = clean_title_text(match.group(1))
+        if topic and len(topic) >= 2:
+            return topic
+    return None
+
+
+def _genres_from_theme_hints(text: str) -> list[str]:
+    lowered = text.lower()
+    genres: list[str] = []
+    for hint, names in VAGUE_THEME_HINTS:
+        if hint in lowered:
+            for name in names:
+                if name not in genres:
+                    genres.append(name)
+    return genres
 
 
 def is_vague_query(text: str) -> bool:
@@ -185,22 +218,17 @@ def parse_vague_query(text: str) -> SearchFilters | None:
     if not is_vague_query(text):
         return None
 
-    lowered = text.lower()
-    genres: list[str] = []
-    for hint, names in VAGUE_THEME_HINTS:
-        if hint in lowered:
-            for name in names:
-                if name not in genres:
-                    genres.append(name)
-
-    if not genres:
+    topic = parse_topic_query(text)
+    genres = _genres_from_theme_hints(text)
+    if not genres and not topic:
         return None
 
     return SearchFilters(
         media_type=parse_media_type(text),
         year=parse_year(text),
         country_name=parse_country_name(text),
-        genre_names=[genres[0]],
+        genre_names=genres[:2] or None,
+        topic_query=topic,
         count=parse_count(text),
         company_query=parse_company(text),
         user_text=text,
@@ -214,6 +242,14 @@ SIMILAR_PATTERNS = (
     re.compile(r"в\s+стиле\s+(.+)", re.IGNORECASE),
     re.compile(
         r"(?:фильм(?:ы|ов)?|сериал(?:ы|ов)?|картин(?:ы|у)?)?\s*(?:как|как\s+у)\s+(.+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"посоветуй(?:те)?\s+(?:фильм|сериал|кино|что-нибудь|что-то)?\s*(?:как|похож(?:ий|ие|ую|ая)?\s+на)\s+(.+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"рекомендуй(?:те)?\s+(?:фильм|сериал|кино)?\s*(?:как|похож(?:ий|ие|ую|ая)?\s+на)\s+(.+)",
         re.IGNORECASE,
     ),
     re.compile(r"similar\s+to\s+(.+)", re.IGNORECASE),
@@ -306,6 +342,8 @@ def has_filter_signals(text: str) -> bool:
 def parse_query_mode(text: str) -> QueryMode:
     if extract_reference_title(text):
         return "similar"
+    if parse_topic_query(text) or parse_vague_query(text):
+        return "filter"
     if has_filter_signals(text):
         return "filter"
     cleaned = clean_title_text(text)
@@ -326,11 +364,14 @@ def parse_title_query(text: str, mode: QueryMode) -> str | None:
 def parse_search_filters(text: str) -> SearchFilters:
     query_mode = parse_query_mode(text)
     explicit_type = has_explicit_media_type(text)
+    topic = parse_topic_query(text)
+    genre_names = parse_genre_names(text) or _genres_from_theme_hints(text) or None
     return SearchFilters(
         media_type=parse_media_type(text),
         year=parse_year(text),
         country_name=parse_country_name(text),
-        genre_names=parse_genre_names(text),
+        genre_names=genre_names[:2] if genre_names else None,
+        topic_query=topic,
         count=parse_count(text),
         company_query=parse_company(text),
         user_text=text,

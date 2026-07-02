@@ -77,6 +77,28 @@ def build_parser_genre_keywords() -> dict[str, list[str]]:
 
 PARSER_GENRE_KEYWORDS = build_parser_genre_keywords()
 
+KINOPOISK_SEARCH_GENRES: tuple[str, ...] = (
+    "детектив",
+    "комедия",
+    "ужасы",
+    "фантастика",
+    "мелодрама",
+    "драма",
+    "боевик",
+    "фэнтези",
+    "семейный",
+    "триллер",
+    "криминал",
+    "история",
+    "приключения",
+    "военный",
+    "спорт",
+    "биография",
+    "вестern",
+    "музыкальный",
+    "детский",
+)
+
 
 def build_collection_callback(collection_id: str) -> str:
     return f"{COLLECTION_CALLBACK_PREFIX}{collection_id}"

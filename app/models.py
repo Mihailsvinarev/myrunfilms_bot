@@ -79,6 +79,7 @@ class MovieItem(BaseModel):
 class SearchResult:
     movies: list[MovieItem]
     error: str | None = None
+    header: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -93,6 +94,7 @@ class SearchFilters(BaseModel):
     genre_names: list[str] | None = None
     count: int = Field(default=5, ge=1, le=10)
     company_query: str | None = None
+    topic_query: str | None = None
     user_text: str | None = None
     query_mode: QueryMode = "filter"
     title_query: str | None = None

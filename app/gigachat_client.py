@@ -19,18 +19,21 @@ from app.config import (
     GIGACHAT_TIMEOUT,
     GIGACHAT_VERIFY_SSL,
 )
+from app.genres import KINOPOISK_SEARCH_GENRES
 from app.models import SearchFilters
 from app.query_parser import (
     COUNTRY_KEYWORDS,
-    GENRE_KEYWORDS,
+    extract_reference_title,
+    has_explicit_media_type,
     parse_company,
+    parse_topic_query,
 )
 
 logger = logging.getLogger(__name__)
 
 TOKEN_TTL_SECONDS = 30 * 60
 
-ALLOWED_GENRES = sorted({name for names in GENRE_KEYWORDS.values() for name in names})
+ALLOWED_GENRES = list(KINOPOISK_SEARCH_GENRES)
 ALLOWED_COUNTRIES = sorted(set(COUNTRY_KEYWORDS.values()))
 
 MOOD_TO_GENRES: dict[str, list[str]] = {
@@ -43,9 +46,41 @@ MOOD_TO_GENRES: dict[str, list[str]] = {
     "романт": ["мелодрама"],
     "драм": ["драма"],
     "легк": ["комедия", "мелодрама"],
+    "расследован": ["детектив"],
+    "шпион": ["триллер", "боевик"],
+    "войн": ["военный", "история"],
+    "космос": ["фантастика"],
+    "космонавт": ["фантастика"],
 }
 
-SYSTEM_PROMPT = """Ты парсер запросов к боту подбора фильмов и сериалов.
+TOPIC_TO_GENRES: dict[str, list[str]] = {
+    "теннис": ["спорт"],
+    "tennis": ["спорт"],
+    "футбол": ["спорт"],
+    "football": ["спорт"],
+    "soccer": ["спорт"],
+    "хоккей": ["спорт"],
+    "hockey": ["спорт"],
+    "баскетбол": ["спорт"],
+    "basketball": ["спорт"],
+    "бокс": ["спорт"],
+    "боксер": ["спорт"],
+    "спорт": ["спорт"],
+    "олимпиад": ["спорт"],
+    "шахмат": ["драма", "биография"],
+    "chess": ["драма", "биография"],
+    "музык": ["музыкальный", "драма"],
+    "готовк": ["комедия"],
+    "кулинар": ["комедия"],
+    "медицин": ["драма"],
+    "врач": ["драма"],
+    "больниц": ["драма"],
+    "школ": ["драма", "комедия"],
+    "университет": ["драма", "комедия"],
+}
+
+SYSTEM_PROMPT = """Ты парсер запросов к боту подбора фильмов и сериалов
+через API Kinopoisk.
 Извлеки параметры поиска из текста пользователя.
 НЕ рекомендуй фильмы и НЕ придумывай названия.
 
@@ -60,18 +95,43 @@ SYSTEM_PROMPT = """Ты парсер запросов к боту подбора
   "director": string | null,
   "actor": string | null,
   "mood": string | null,
+  "topic": string | null,
+  "similar_title": string | null,
   "count": number
 }
 
-Правила:
-- media_type=tv для сериалов, movie для фильмов, null если не указано.
-- genres только из списка: __GENRES__
-- country только из списка: __COUNTRIES__
+Поля и правила Kinopoisk:
+- media_type=tv для сериалов, movie для фильмов, null если не указано явно.
+- genres — только из списка Kinopoisk: __GENRES__
+- country — только из списка: __COUNTRIES__
+- topic — главное ключевое слово темы/сюжета (1–3 слова) для текстового поиска.
+  Обязательно заполняй для конструкций «про X», «about X», «на тему X».
+  topic — это НЕ название фильма. Не пиши в topic слова «сериал», «фильм», «про».
+- similar_title — только для «как X», «похожие на X», «в стиле X»
+  (конкретное название образца).
+- mood — настроение или общая тема, если topic не выделить одним словом.
 - count от 1 до 10.
-- mood — настроение или тема запроса (например "мрачное", "про маньяков").
-- темы "маньяк", "серийный убийца" -> genres ["триллер", "криминал"].
-- director и actor — имена режиссёра и актёра, если явно указаны.
-- year — один год; year_from/year_to — диапазон лет.
+- director и actor — имена, если явно указаны.
+- year — один год; year_from/year_to — диапазон.
+
+Сопоставление тем с жанрами Kinopoisk (используй genres вместе с topic):
+- теннис, футбол, хоккей, бокс, баскетбол, спорт, олимпиада -> genres ["спорт"]
+- маньяк, серийный убийца -> ["триллер", "криминал"]
+- расследование, детектив, криминал -> ["детектив"] или ["криминал"]
+- страшное, хоррор -> ["ужасы"]
+- романтика, любовь -> ["мелодрама"]
+- космос, будущее -> ["фантастика"]
+- война, фронт -> ["военный"]
+- историческая эпоха, биография известного человека -> ["история", "биография"]
+
+Примеры:
+- «Сериал про теннис» -> media_type=tv, genres=["спорт"], topic="теннис"
+- «фильмы про футбол 2020» -> media_type=movie, year=2020,
+  genres=["спорт"], topic="футбол"
+- «мрачный детектив Россия» -> media_type=null,
+  genres=["детектив","триллер"], country="Россия", mood="мрачное"
+- «похожие на Интерстеллар» -> similar_title="Интерстеллар", genres=null, topic=null
+- «сериал про врачей» -> media_type=tv, genres=["драма"], topic="врачи"
 """
 
 
@@ -85,6 +145,8 @@ class QueryFilters(BaseModel):
     director: str | None = None
     actor: str | None = None
     mood: str | None = None
+    topic: str | None = None
+    similar_title: str | None = None
     count: int = Field(default=5, ge=1, le=10)
 
 
@@ -190,8 +252,22 @@ class GigaChatClient:
         return QueryFilters.model_validate(payload)
 
     def to_search_filters(self, query: QueryFilters, user_text: str) -> SearchFilters:
+        similar_title = self._resolve_similar_title(query, user_text)
+        if similar_title:
+            media_type = query.media_type or "movie"
+            return SearchFilters(
+                media_type=media_type,
+                count=query.count,
+                user_text=user_text,
+                query_mode="similar",
+                title_query=similar_title,
+                restrict_media_type=has_explicit_media_type(user_text),
+            )
+
+        topic_query = self._resolve_topic(query, user_text)
         genre_names = self._normalize_genres(query.genres)
         genre_names = self._apply_mood(query.mood, genre_names)
+        genre_names = self._apply_topic(topic_query, query.mood, genre_names)
         country_name = self._normalize_country(query.country)
         year = self._resolve_year(query)
         company_query = parse_company(user_text)
@@ -203,13 +279,16 @@ class GigaChatClient:
             effective_text = f"{query.actor} {user_text}".strip()
 
         media_type = query.media_type or "movie"
-        restrict_media_type = query.media_type is not None
+        restrict_media_type = query.media_type is not None or has_explicit_media_type(
+            user_text
+        )
 
         return SearchFilters(
             media_type=media_type,
             year=year,
             country_name=country_name,
             genre_names=genre_names,
+            topic_query=topic_query,
             count=query.count,
             company_query=company_query,
             user_text=effective_text,
@@ -249,6 +328,21 @@ class GigaChatClient:
             return query.year_from
         return query.year_to
 
+    def _resolve_topic(self, query: QueryFilters, user_text: str) -> str | None:
+        if query.topic and query.topic.strip():
+            return self._clean_topic(query.topic)
+        parsed = parse_topic_query(user_text)
+        if parsed:
+            return self._clean_topic(parsed)
+        return None
+
+    def _clean_topic(self, topic: str) -> str:
+        cleaned = topic.strip().lower()
+        for word in ("сериал", "фильм", "кино", "про", "about"):
+            cleaned = re.sub(rf"\b{re.escape(word)}\b", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,!?;:")
+        return cleaned
+
     def _apply_mood(
         self, mood: str | None, genre_names: list[str] | None
     ) -> list[str] | None:
@@ -270,6 +364,37 @@ class GigaChatClient:
             if genre not in merged:
                 merged.append(genre)
         return merged[:3]
+
+    def _apply_topic(
+        self,
+        topic_query: str | None,
+        mood: str | None,
+        genre_names: list[str] | None,
+    ) -> list[str] | None:
+        hints = " ".join(part for part in (topic_query, mood) if part).lower()
+        if not hints:
+            return genre_names
+
+        topic_genres: list[str] = []
+        for hint, names in TOPIC_TO_GENRES.items():
+            if hint in hints:
+                for name in names:
+                    if name not in topic_genres:
+                        topic_genres.append(name)
+        if not topic_genres:
+            return genre_names
+        if not genre_names:
+            return topic_genres[:2]
+        merged = list(genre_names)
+        for genre in topic_genres:
+            if genre not in merged:
+                merged.append(genre)
+        return merged[:3]
+
+    def _resolve_similar_title(self, query: QueryFilters, user_text: str) -> str | None:
+        if query.similar_title and query.similar_title.strip():
+            return query.similar_title.strip()
+        return extract_reference_title(user_text)
 
 
 def _extract_json(content: str) -> dict[str, Any]:

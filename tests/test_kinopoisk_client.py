@@ -18,6 +18,7 @@ SAMPLE_DOC = {
     "description": "Русское описание сериала на Kinopoisk.",
     "isSeries": True,
     "type": "tv-series",
+    "poster": {"url": "https://example.com/poster.jpg"},
 }
 
 
@@ -126,6 +127,7 @@ async def test_search_by_title_matches_exact_name():
             "countries": [{"name": "США"}],
             "description": "Русское описание фильма.",
             "isSeries": False,
+            "poster": {"url": "https://example.com/interstellar.jpg"},
         },
         {
             "id": 1009186,
@@ -161,6 +163,68 @@ async def test_search_by_title_matches_exact_name():
     assert len(movies) == 1
     assert movies[0].id == 258687
     assert movies[0].title == "Интерстеллар"
+
+
+@pytest.mark.asyncio
+async def test_search_similar_loads_similar_movies_from_reference_detail():
+    captured: dict[str, object] = {}
+
+    reference_doc = {
+        "id": 258687,
+        "name": "Интерстеллар",
+        "alternativeName": "Interstellar",
+        "year": 2014,
+        "genres": [{"name": "фантастика"}],
+        "countries": [{"name": "США"}],
+        "description": "Русское описание фильма.",
+        "isSeries": False,
+        "poster": {"url": "https://example.com/interstellar.jpg"},
+    }
+    similar_doc = {
+        **SAMPLE_DOC,
+        "id": 777,
+        "name": "Гравитация",
+        "genres": [{"name": "фантастика"}],
+        "isSeries": False,
+        "type": "movie",
+        "poster": {"url": "https://example.com/gravity.jpg"},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/movie/search"):
+            return httpx.Response(200, json={"docs": [reference_doc]})
+        if request.url.path.endswith("/258687"):
+            return httpx.Response(
+                200,
+                json={
+                    **reference_doc,
+                    "similarMovies": [{"id": 777, "name": "Гравитация"}],
+                },
+            )
+        if request.url.path.endswith("/movie"):
+            captured["params"] = dict(request.url.params)
+            return httpx.Response(200, json={"docs": [similar_doc]})
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="https://api.kinopoisk.dev/v1.4",
+        headers={"X-API-KEY": "test"},
+    ) as http_client:
+        client = KinopoiskClient(api_key="test", client=http_client)
+        filters = SearchFilters(
+            title_query="Интерстеллар",
+            query_mode="similar",
+            restrict_media_type=False,
+            count=3,
+        )
+        movies = await client.search_similar("Интерстеллар", filters)
+
+    assert captured["params"]["id"] == "777"
+    assert "similarMovies.id" not in captured["params"]
+    assert len(movies) == 1
+    assert movies[0].title == "Гравитация"
 
 
 @pytest.mark.asyncio

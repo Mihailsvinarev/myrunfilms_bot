@@ -44,7 +44,7 @@ def test_parse_vague_query_detective_theme():
     filters = parse_vague_query("что-то мрачное про расследование")
     assert filters is not None
     assert filters.query_mode == "filter"
-    assert filters.genre_names == ["детектив"]
+    assert filters.genre_names == ["детектив", "триллер"]
     assert filters.title_query is None
 
 
@@ -54,7 +54,24 @@ def test_parse_vague_query_maniac_theme():
     assert filters.media_type == "tv"
     assert filters.year == 2025
     assert filters.country_name == "Россия"
-    assert filters.genre_names == ["триллер"]
+    assert filters.genre_names == ["триллер", "криминал"]
+
+
+def test_parse_vague_query_tennis_theme():
+    filters = parse_vague_query("Сериал про теннис")
+    assert filters is not None
+    assert filters.media_type == "tv"
+    assert filters.genre_names == ["спорт"]
+    assert filters.topic_query == "теннис"
+    assert filters.query_mode == "filter"
+
+
+def test_parse_search_filters_tennis_uses_filter_mode():
+    filters = parse_search_filters("Сериал про теннис")
+    assert filters.query_mode == "filter"
+    assert filters.topic_query == "теннис"
+    assert filters.genre_names == ["спорт"]
+    assert filters.title_query is None
 
 
 def test_parse_company():

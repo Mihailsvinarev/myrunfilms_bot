@@ -12,8 +12,8 @@ from app.content_filters import (
     is_allowed_movie,
 )
 from app.genres import GENRE_ANY_ID, GenreOption, get_genre
-from app.kinopoisk_client import KinopoiskClient
 from app.models import MovieItem
+from app.protocols import MovieRepository
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +164,9 @@ def build_search_params(
     premiere_field = premiere_field_for_scope(collection.country_scope)
     if collection.period == "last_120_days":
         if search_mode == "premiere":
-            params.append((premiere_field, premiere_range_days(NEW_RELEASE_PREMIERE_DAYS)))
+            params.append(
+                (premiere_field, premiere_range_days(NEW_RELEASE_PREMIERE_DAYS))
+            )
         else:
             years = release_years_for_period(NEW_RELEASE_PREMIERE_DAYS)
             if len(years) == 1:
@@ -221,7 +223,7 @@ def passes_collection_filters(
 
 
 async def _fetch_collection_movies(
-    client: KinopoiskClient,
+    client: MovieRepository,
     collection: Collection,
     genre: GenreOption,
     *,
@@ -253,9 +255,7 @@ async def _fetch_collection_movies(
             if not passes_collection_filters(movie, collection, genre):
                 continue
             if search_mode == "year" and collection.period == "last_120_days":
-                if not year_in_release_window(
-                    movie, days=NEW_RELEASE_PREMIERE_DAYS
-                ):
+                if not year_in_release_window(movie, days=NEW_RELEASE_PREMIERE_DAYS):
                     continue
             if collection.random_pick:
                 pool.append(movie)
@@ -273,7 +273,7 @@ async def _fetch_collection_movies(
 
 
 async def _merge_year_fallback(
-    client: KinopoiskClient,
+    client: MovieRepository,
     collection: Collection,
     genre: GenreOption,
     *,
@@ -302,7 +302,7 @@ async def _merge_year_fallback(
 
 
 async def search_collection(
-    client: KinopoiskClient,
+    client: MovieRepository,
     collection_id: str,
     genre_id: str,
 ) -> list[MovieItem]:
@@ -346,10 +346,7 @@ async def search_collection(
             selected=selected,
             seen_ids=seen_ids,
         )
-        if (
-            genre.id != GENRE_ANY_ID
-            and len(selected) < collection.result_limit
-        ):
+        if genre.id != GENRE_ANY_ID and len(selected) < collection.result_limit:
             selected = await _merge_year_fallback(
                 client,
                 collection,

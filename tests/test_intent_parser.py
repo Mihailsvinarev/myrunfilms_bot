@@ -13,6 +13,11 @@ def test_parse_query_mode_similar():
     assert parse_query_mode("похожие на Интерстеллар") == "similar"
     assert parse_title_query("фильмы в стиле Интерстеллар", "similar") == "Интерстеллар"
     assert parse_title_query("5 фильмов как Interstellar", "similar") == "Interstellar"
+    assert parse_query_mode("посоветуй фильм как Интерстеллар") == "similar"
+    assert (
+        parse_title_query("посоветуй фильм как Интерстеллар", "similar")
+        == "Интерстеллар"
+    )
 
 
 def test_parse_query_mode_filter():

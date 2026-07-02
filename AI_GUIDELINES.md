@@ -36,6 +36,23 @@ The agent **may** change without asking:
 - Removing user-facing bot features without request
 - Switching data source away from Kinopoisk
 
+## High-risk zones
+
+Changes here can break search quality, data integrity, or production secrets. Always require human review and full test run:
+
+| Zone | Why risky |
+|------|-----------|
+| `app/kinopoisk_client.py` | HTTP params, pagination, field mapping — wrong query = wrong or empty results |
+| `app/query_parser.py` | Intent parsing — affects every text search |
+| `app/gigachat_client.py` | LLM routing — can misroute or drop filters |
+| `app/content_filters.py` | Genre/country exclusions — business rules |
+| `app/collections.py` | Curated lists and API params for collections |
+| `app/composition.py` | DI wiring — wrong binding breaks entire app |
+| `.env`, `app/config.py` | Secrets and runtime config |
+| `main.py` handler order | Wrong order can swallow commands or callbacks |
+
+Lower risk but still test after change: `telegram_cards.py`, `keyboards.py`, `response_formatter.py`.
+
 ## Implementation conventions
 
 - Async HTTP via `httpx.AsyncClient` in `app/kinopoisk_client.py`
@@ -46,15 +63,51 @@ The agent **may** change without asking:
 - Russian-only descriptions in output
 - Do not pad results below requested count
 
-## Mandatory checks before commit
+## Mandatory checks after every AI change
+
+Run in order; do not commit if any step fails.
+
+### 1. Lint and format
 
 ```bash
 ruff check .
 black --check .
-pytest -q
 ```
 
-If any check fails — fix before committing.
+### 2. Tests
+
+```bash
+pytest -q
+pytest --cov=app --cov-report=term-missing -q
+```
+
+Coverage must not drop significantly vs baseline in `TESTING.md`.
+
+### 3. Build (install sanity)
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -c "from app.composition import build_app_services; build_app_services()"
+```
+
+For Docker path:
+
+```bash
+docker compose build
+```
+
+### 4. Code review (human)
+
+Before commit, developer must:
+
+- read the full `git diff`;
+- verify no secrets, no invented movie data, no TMDB reintroduction;
+- confirm handler/UI behaviour matches the task;
+- smoke-test the bot locally if UI or handlers changed (`python main.py` + one text query and one collection).
+
+### 5. CI
+
+Push only after local steps pass; confirm GitHub Actions is green on the branch.
 
 ## Typical tasks
 

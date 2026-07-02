@@ -38,11 +38,17 @@ def has_excluded_country(movie: MovieItem) -> bool:
     return bool(set(movie.countries) & EXCLUDED_COUNTRY_NAMES)
 
 
+def has_poster(movie: MovieItem) -> bool:
+    return bool(movie.poster_url and movie.poster_url.strip())
+
+
 def is_allowed_movie(
     movie: MovieItem,
     *,
     require_russian_title: bool = False,
 ) -> bool:
+    if not has_poster(movie):
+        return False
     if has_excluded_genre(movie):
         return False
     if has_excluded_country(movie):

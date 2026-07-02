@@ -1,36 +1,39 @@
 from __future__ import annotations
 
 import logging
-import random
 from dataclasses import dataclass
 from typing import Literal
 
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    InputMediaPhoto,
-    Update,
-)
+from telegram import InputMediaPhoto, Update
 from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
+from app.content_filters import has_poster
+from app.keyboards import collections_keyboard
 from app.models import MovieItem
-from app.telegram_utils import truncate_description
+from app.telegram_cards import (
+    BROWSER_COLLECTIONS_CALLBACK,
+    BROWSER_COMPACT_CALLBACK,
+    BROWSER_DETAILS_CALLBACK,
+    BROWSER_NEXT_CALLBACK,
+    BROWSER_PREV_CALLBACK,
+    BROWSER_RANDOM_CALLBACK,
+    DisplayMode,
+    build_card_keyboard,
+    format_card_caption,
+    next_index,
+    prev_index,
+    random_index,
+)
 
 logger = logging.getLogger(__name__)
 
 STATE_KEY = "movie_browser"
-BROWSER_PREV_CALLBACK = "browser:prev"
-BROWSER_NEXT_CALLBACK = "browser:next"
-BROWSER_RANDOM_CALLBACK = "browser:random"
-BROWSER_NOOP_PREV_CALLBACK = "browser:noop:prev"
-BROWSER_NOOP_NEXT_CALLBACK = "browser:noop:next"
-
+TEXT_SEARCH_SOURCE = "text_search"
+TEXT_SEARCH_GENRE = "query"
+FILTER_SEARCH_SOURCE = "filters"
+FILTER_SEARCH_GENRE = "ui"
 BrowserAction = Literal["prev", "next", "random"]
-NOOP_MESSAGES = {
-    "prev": "Это первый фильм в подборке.",
-    "next": "Это последний фильм в подборке.",
-}
 
 
 @dataclass(slots=True)
@@ -39,6 +42,8 @@ class MovieBrowserState:
     genre_id: str
     movies: list[MovieItem]
     index: int = 0
+    display_mode: DisplayMode = "compact"
+    header: str | None = None
     message_id: int | None = None
     chat_id: int | None = None
     text_mode: bool = False
@@ -56,6 +61,8 @@ class MovieBrowserState:
             "genre_id": self.genre_id,
             "movies": [movie.model_dump() for movie in self.movies],
             "index": self.index,
+            "display_mode": self.display_mode,
+            "header": self.header,
             "message_id": self.message_id,
             "chat_id": self.chat_id,
             "text_mode": self.text_mode,
@@ -69,117 +76,31 @@ class MovieBrowserState:
         movies = [MovieItem.model_validate(item) for item in movies_raw]
         if not movies:
             return None
+        display_mode = data.get("display_mode", "compact")
+        if display_mode not in ("compact", "details"):
+            display_mode = "compact"
         return cls(
             collection_id=str(data["collection_id"]),
             genre_id=str(data["genre_id"]),
             movies=movies,
             index=int(data.get("index", 0)),
+            display_mode=display_mode,
+            header=data.get("header"),
             message_id=data.get("message_id"),
             chat_id=data.get("chat_id"),
             text_mode=bool(data.get("text_mode", False)),
         )
 
 
-def can_go_next(index: int, total: int) -> bool:
-    return total > 0 and index < total - 1
-
-
-def can_go_prev(index: int, total: int) -> bool:
-    return total > 0 and index > 0
-
-
-def next_index(current: int, total: int) -> int | None:
-    if not can_go_next(current, total):
-        return None
-    return current + 1
-
-
-def prev_index(current: int, total: int) -> int | None:
-    if not can_go_prev(current, total):
-        return None
-    return current - 1
-
-
-def random_index(total: int, *, current: int | None = None) -> int:
-    if total <= 0:
-        return 0
-    if total == 1:
-        return 0
-    while True:
-        picked = random.randint(0, total - 1)
-        if current is None or picked != current:
-            return picked
-
-
-def has_poster(movie: MovieItem) -> bool:
-    return bool(movie.poster_url and movie.poster_url.strip())
-
-
-def format_movie_card_caption(movie: MovieItem, *, index: int, total: int) -> str:
-    year = str(movie.year) if movie.year else "—"
-    description = (
-        truncate_description(movie.description) if movie.description.strip() else "—"
-    )
-    rating = movie.kp_rating_label if movie.kp_rating is not None else "—"
-    position = f"📍 {index + 1} / {total}\n\n" if total > 1 else ""
-    return (
-        f"{position}"
-        f"🎬 {movie.title}\n\n"
-        f"⭐ {rating}\n"
-        f"📅 {year}\n"
-        f"🌍 {movie.countries_label}\n"
-        f"🎭 {movie.genres_label}\n\n"
-        f"📝 {description}\n\n"
-        f"🔗 {movie.kinopoisk_url}"
-    )
-
-
-def build_browser_keyboard(
-    movie: MovieItem,
-    *,
-    index: int,
-    total: int,
-) -> InlineKeyboardMarkup:
-    prev_active = can_go_prev(index, total)
-    next_active = can_go_next(index, total)
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "⬅ Предыдущий" if prev_active else "▫️ Предыдущий",
-                    callback_data=(
-                        BROWSER_PREV_CALLBACK
-                        if prev_active
-                        else BROWSER_NOOP_PREV_CALLBACK
-                    ),
-                ),
-                InlineKeyboardButton(
-                    "➡ Следующий" if next_active else "▫️ Следующий",
-                    callback_data=(
-                        BROWSER_NEXT_CALLBACK
-                        if next_active
-                        else BROWSER_NOOP_NEXT_CALLBACK
-                    ),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "🎲 Другой случайный", callback_data=BROWSER_RANDOM_CALLBACK
-                ),
-                InlineKeyboardButton("🔗 Открыть Кинопоиск", url=movie.kinopoisk_url),
-            ],
-        ]
-    )
-
-
 def log_browser_state(state: MovieBrowserState, *, event: str) -> None:
     logger.info(
-        "%s collection_id=%s genre_id=%s total=%d index=%d",
+        "%s collection_id=%s genre_id=%s total=%d index=%d mode=%s",
         event,
         state.collection_id,
         state.genre_id,
         len(state.movies),
         state.index,
+        state.display_mode,
     )
 
 
@@ -221,6 +142,7 @@ class MovieBrowser:
             genre_id=genre_id,
             movies=movies,
             index=0,
+            display_mode="compact",
         )
         chat_id = query.message.chat_id
         await query.message.delete()
@@ -232,6 +154,43 @@ class MovieBrowser:
         log_browser_state(state, event="Movie browser opened")
 
     @staticmethod
+    async def open_from_message(
+        message,
+        context: ContextTypes.DEFAULT_TYPE,
+        *,
+        source_id: str,
+        genre_id: str,
+        movies: list[MovieItem],
+        header: str | None = None,
+        status_message=None,
+    ) -> None:
+        if not movies:
+            MovieBrowser.clear(context)
+            return
+
+        if status_message is not None:
+            try:
+                await status_message.delete()
+            except BadRequest:
+                pass
+
+        state = MovieBrowserState(
+            collection_id=source_id,
+            genre_id=genre_id,
+            movies=movies,
+            index=0,
+            display_mode="compact",
+            header=header,
+        )
+        chat_id = message.chat_id
+        sent = await MovieBrowser._send_card(context, chat_id, state)
+        state.message_id = sent.message_id
+        state.chat_id = chat_id
+        state.text_mode = sent.photo is None
+        MovieBrowser.save(context, state)
+        log_browser_state(state, event="Movie browser opened from message")
+
+    @staticmethod
     async def navigate(
         query,
         context: ContextTypes.DEFAULT_TYPE,
@@ -239,22 +198,14 @@ class MovieBrowser:
     ) -> None:
         state = MovieBrowser.load(context)
         if state is None:
-            await query.answer("Подборка не найдена. Выберите подборку заново.")
+            await query.answer("Список фильмов не найден. Начните поиск заново.")
             return
 
         total = state.total
         if action == "prev":
-            new_index = prev_index(state.index, total)
-            if new_index is None:
-                await query.answer(NOOP_MESSAGES["prev"])
-                return
-            state.index = new_index
+            state.index = prev_index(state.index, total)
         elif action == "next":
-            new_index = next_index(state.index, total)
-            if new_index is None:
-                await query.answer(NOOP_MESSAGES["next"])
-                return
-            state.index = new_index
+            state.index = next_index(state.index, total)
         else:
             state.index = random_index(total, current=state.index)
 
@@ -264,14 +215,49 @@ class MovieBrowser:
         log_browser_state(state, event="Movie browser navigate")
 
     @staticmethod
-    async def noop(query, *, edge: Literal["prev", "next"]) -> None:
-        await query.answer(NOOP_MESSAGES[edge])
+    async def set_display_mode(
+        query,
+        context: ContextTypes.DEFAULT_TYPE,
+        mode: DisplayMode,
+    ) -> None:
+        state = MovieBrowser.load(context)
+        if state is None:
+            await query.answer("Список фильмов не найден. Начните поиск заново.")
+            return
+
+        state.display_mode = mode
+        await query.answer()
+        await MovieBrowser._update_card(query, context, state)
+        MovieBrowser.save(context, state)
+        log_browser_state(state, event=f"Movie browser mode={mode}")
+
+    @staticmethod
+    async def show_collections_menu(
+        query,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        MovieBrowser.clear(context)
+        await query.answer()
+        await query.edit_message_text(
+            "Выберите подборку:",
+            reply_markup=collections_keyboard(),
+        )
 
     @staticmethod
     async def _send_card(context: ContextTypes.DEFAULT_TYPE, chat_id: int, state):
         movie = state.current_movie()
-        caption = format_movie_card_caption(movie, index=state.index, total=state.total)
-        keyboard = build_browser_keyboard(movie, index=state.index, total=state.total)
+        caption = format_card_caption(
+            movie,
+            index=state.index,
+            total=state.total,
+            mode=state.display_mode,
+            header=state.header,
+        )
+        keyboard = build_card_keyboard(
+            movie,
+            mode=state.display_mode,
+            include_menu_actions=state.collection_id != TEXT_SEARCH_SOURCE,
+        )
         bot = context.bot
 
         if has_poster(movie):
@@ -301,8 +287,18 @@ class MovieBrowser:
         state: MovieBrowserState,
     ) -> None:
         movie = state.current_movie()
-        caption = format_movie_card_caption(movie, index=state.index, total=state.total)
-        keyboard = build_browser_keyboard(movie, index=state.index, total=state.total)
+        caption = format_card_caption(
+            movie,
+            index=state.index,
+            total=state.total,
+            mode=state.display_mode,
+            header=state.header,
+        )
+        keyboard = build_card_keyboard(
+            movie,
+            mode=state.display_mode,
+            include_menu_actions=state.collection_id != TEXT_SEARCH_SOURCE,
+        )
         wants_photo = has_poster(movie)
 
         if wants_photo and not state.text_mode:
@@ -351,7 +347,7 @@ class MovieBrowser:
         context: ContextTypes.DEFAULT_TYPE,
         state: MovieBrowserState,
         caption: str,
-        keyboard: InlineKeyboardMarkup,
+        keyboard,
         *,
         photo: bool,
     ) -> None:
@@ -412,28 +408,37 @@ def build_browser_handlers() -> list[CallbackQueryHandler]:
             return
         await MovieBrowser.navigate(query, context, "random")
 
-    async def browser_noop_prev(
+    async def browser_details(
         update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         query = update.callback_query
-        if query:
-            await MovieBrowser.noop(query, edge="prev")
+        if not query:
+            return
+        await MovieBrowser.set_display_mode(query, context, "details")
 
-    async def browser_noop_next(
+    async def browser_compact(
         update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         query = update.callback_query
-        if query:
-            await MovieBrowser.noop(query, edge="next")
+        if not query:
+            return
+        await MovieBrowser.set_display_mode(query, context, "compact")
+
+    async def browser_collections(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        query = update.callback_query
+        if not query:
+            return
+        await MovieBrowser.show_collections_menu(query, context)
 
     return [
         CallbackQueryHandler(browser_prev, pattern=f"^{BROWSER_PREV_CALLBACK}$"),
         CallbackQueryHandler(browser_next, pattern=f"^{BROWSER_NEXT_CALLBACK}$"),
         CallbackQueryHandler(browser_random, pattern=f"^{BROWSER_RANDOM_CALLBACK}$"),
+        CallbackQueryHandler(browser_details, pattern=f"^{BROWSER_DETAILS_CALLBACK}$"),
+        CallbackQueryHandler(browser_compact, pattern=f"^{BROWSER_COMPACT_CALLBACK}$"),
         CallbackQueryHandler(
-            browser_noop_prev, pattern=f"^{BROWSER_NOOP_PREV_CALLBACK}$"
-        ),
-        CallbackQueryHandler(
-            browser_noop_next, pattern=f"^{BROWSER_NOOP_NEXT_CALLBACK}$"
+            browser_collections, pattern=f"^{BROWSER_COLLECTIONS_CALLBACK}$"
         ),
     ]
